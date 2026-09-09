@@ -263,7 +263,6 @@ export class CloudClient implements MachineBackend {
       ...(opts.env ? { env: opts.env } : {}),
       ...(opts.ttlSeconds !== undefined ? { ttlSeconds: opts.ttlSeconds } : {}),
       ...(opts.autoStopSeconds !== undefined ? { autoStopSeconds: opts.autoStopSeconds } : {}),
-      ...(opts.ephemeral !== undefined ? { ephemeral: opts.ephemeral } : {}),
     };
     return cloudView(await this.call("POST", "/v1/machines", CloudMachineSchema, { json: body, timeoutMs: 180_000, signal: ctx.signal }));
   }

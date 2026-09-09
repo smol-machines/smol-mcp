@@ -146,17 +146,21 @@ describe("runOnce", () => {
     b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
 
     await runOnce({ backend: b, cfg: testConfig({ ephemeralTtlSecs: 600, ephemeralAutoStopSecs: 60 }), state: undefined, session: SESSION }, { image: "alpine", command: "true" });
-    // ttlSeconds alone caps the bill at an hour; the idle stop ends it at the
-    // first quiet window, and ephemeral is what turns that stop into a delete
-    // rather than a machine kept stopped with its disk still billing.
-    expect(b.calls[0]?.args).toMatchObject({ ttlSeconds: 600, autoStopSeconds: 60, ephemeral: true });
+    // ttlSeconds caps the bill at an hour and the idle stop ends the expensive
+    // part of it at the first quiet window. The API's own `ephemeral` field is
+    // deliberately not sent: it deletes a machine once it stops, a cloud
+    // machine is created stopped, and the sweep beats the start to it.
+    expect(b.calls[0]?.args).toMatchObject({ ttlSeconds: 600, autoStopSeconds: 60 });
+    expect(b.calls[0]?.args).not.toHaveProperty("ephemeral");
   });
 
   it("sends the same backstops for an ephemeral create, and none for a named machine", async () => {
     const b = new FakeBackend("cloud");
     const m = { backend: b, cfg: testConfig({ ephemeralTtlSecs: 600, ephemeralAutoStopSecs: 60 }), state: undefined, session: SESSION };
     await createMachine(m, { image: "alpine", start: false });
-    expect(b.calls[0]?.args).toMatchObject({ ttlSeconds: 600, autoStopSeconds: 60, ephemeral: true });
+    expect(b.calls[0]?.args).toMatchObject({ ttlSeconds: 600, autoStopSeconds: 60 });
+    // The field that would delete the machine before the start could reach it.
+    expect(b.calls[0]?.args).not.toHaveProperty("ephemeral");
     b.calls.length = 0;
     // A machine the caller named is theirs to keep; nothing here deletes it.
     await createMachine(m, { name: "keeper", image: "alpine", start: false });

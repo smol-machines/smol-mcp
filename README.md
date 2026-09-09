@@ -145,7 +145,7 @@ dropping unknown fields is exactly the failure this avoids.
 | readiness timeout | `SMOL_MCP_READY_TIMEOUT_SECS` | 120 s | Covers a cold image pull inside the guest. |
 | run-once network (local) | `SMOL_MCP_RUN_ONCE_NETWORK` | `open` | See below. |
 | ephemeral TTL | `SMOL_MCP_EPHEMERAL_TTL_SECS` | 3600 s | Sent as `ttlSeconds` where the API has one, so a killed server cannot leave a cloud machine billing forever. |
-| ephemeral idle stop | `SMOL_MCP_EPHEMERAL_AUTO_STOP_SECS` | 900 s | Sent as `autoStopSeconds` with `ephemeral: true`, so an abandoned cloud machine stops and is deleted at the first quiet window instead of billing to the TTL. |
+| ephemeral idle stop | `SMOL_MCP_EPHEMERAL_AUTO_STOP_SECS` | 900 s | Sent as `autoStopSeconds`, so an abandoned cloud machine stops paying for cpu and memory at the first quiet window instead of running to its TTL. |
 | machine prefix | `SMOL_MCP_MACHINE_PREFIX` | `mcp-` | The marker that makes a machine ephemeral. |
 | log tail | `SMOL_MCP_LOGS_TAIL` | 100 lines | What `machine-logs` returns when no cursor is given. |
 | log poll | `SMOL_MCP_LOGS_POLL_SECS` | 2 s | How often a subscribed log resource is checked for new lines. Neither log route pushes, so following is a poll. |

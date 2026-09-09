@@ -159,6 +159,19 @@ describe("CloudClient", () => {
     ).rejects.toMatchObject({ code: "UNSUPPORTED" });
   });
 
+  it("never sends the ephemeral field, which would delete the machine before it starts", async () => {
+    // Observed against the real API: a create carrying `ephemeral: true` was
+    // gone inside ten seconds, because the machine is created stopped and the
+    // field means "delete once stopped", so the sweep beat the start call and
+    // the start answered 404. The identical create without it stayed listed.
+    seen.length = 0;
+    await client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "open" }, ttlSeconds: 600, autoStopSeconds: 60 });
+    const body = JSON.parse(seen[0]?.body ?? "{}") as Record<string, unknown>;
+    expect(body.ttlSeconds).toBe(600);
+    expect(body.autoStopSeconds).toBe(60);
+    expect(body).not.toHaveProperty("ephemeral");
+  });
+
   it("refuses a published port together with blocked egress, naming both ways out", async () => {
     seen.length = 0;
     await expect(

@@ -75,9 +75,13 @@ export interface CreateOptions {
   // Cloud only, and the cheaper half of the backstop: ttlSeconds caps the
   // bill at the hour, this one ends it at the first idle window.
   autoStopSeconds?: number;
-  // Delete the machine once it stops rather than keeping it stopped. Cloud
-  // only, and what turns an auto-stop into a cleanup.
-  ephemeral?: boolean;
+  // There is deliberately no `ephemeral` field here. The cloud API has one,
+  // and it means "delete this machine once it stops"; a cloud machine is
+  // created stopped, so the service's sweep deletes it seconds later, before
+  // anything can start it. Observed against the real API: a create carrying
+  // it was gone inside ten seconds and the start that followed answered 404,
+  // while the identical create without it stayed listed. The idle stop and
+  // the TTL below do the same job without racing the create.
 }
 
 export interface ExecOptions {
