@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { applyArgs, startHttpTransport } from "../../src/http-transport.js";
 import type { HttpTransportHandle } from "../../src/http-transport.js";
@@ -137,6 +138,46 @@ describe("http transport", () => {
     const body = JSON.parse(readText(read)) as { mode: string; targets: { target: string; served: boolean; unavailable: string | null }[] };
     expect(body.mode).toBe("local");
     expect(body.targets.find((x) => x.target === "cloud")).toMatchObject({ served: false, unavailable: "no SMOL_CLOUD_TOKEN is configured" });
+    await transport.close();
+  });
+
+  it("elicits the session target once and then drops the argument from every tool", async () => {
+    const pair = await start({ cloudToken: "a-token" });
+    const client = new Client({ name: "smol-mcp-elicit-test", version: "0" }, { capabilities: { elicitation: {} } });
+    const asked: string[] = [];
+    client.setRequestHandler(ElicitRequestSchema, (req) => {
+      asked.push(req.params.message);
+      return { action: "accept", content: { target: "local" } };
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(pair.url), { requestInit: { headers: { authorization: `Bearer ${TOKEN}` } } });
+    await client.connect(transport as never);
+
+    const first = await client.callTool({ name: "list-machines", arguments: { target: "local" } });
+    expect(first.isError).toBeFalsy();
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/Which should this session use/);
+
+    const after = (await client.listTools()).tools.find((t) => t.name === "list-machines");
+    expect(after?.inputSchema.properties ?? {}).not.toHaveProperty("target");
+    // The elicited answer is the target from here on, so a call that names
+    // nothing is answered rather than refused.
+    const second = await client.callTool({ name: "list-machines", arguments: {} });
+    expect(second.isError).toBeFalsy();
+    // Asked once, not once per call.
+    expect(asked).toHaveLength(1);
+
+    const read = await client.readResource({ uri: "smol://targets" });
+    expect((JSON.parse(readText(read)) as { sessionTarget: string }).sessionTarget).toBe("local");
+    await transport.close();
+  });
+
+  it("keeps the target argument required when the client cannot be elicited", async () => {
+    const pair = await start({ cloudToken: "a-token" });
+    const { client, transport } = await connect(pair.url);
+    const res = await client.callTool({ name: "list-machines", arguments: { target: "local" } });
+    expect(res.isError).toBeFalsy();
+    const after = (await client.listTools()).tools.find((t) => t.name === "list-machines");
+    expect(after?.inputSchema.required).toContain("target");
     await transport.close();
   });
 

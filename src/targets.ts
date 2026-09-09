@@ -52,7 +52,7 @@ export function serverInstructions(mode: TargetMode, cfg: Config): string {
   const lines: string[] = [];
   lines.push(
     mode === "both"
-      ? "This server runs commands and files in virtual machines on two fleets, local and cloud. Every tool takes a required `target` argument naming one of them: there is no default, because a machine on one fleet is invisible on the other and the two bill differently."
+      ? "This server runs commands and files in virtual machines on two fleets, local and cloud. Every tool takes a required `target` argument naming one of them: there is no default, because a machine on one fleet is invisible on the other and the two bill differently. A client that supports elicitation is asked once which fleet this session is for, and an answer of local or cloud removes the argument from every tool."
       : `This server runs commands and files in virtual machines on the ${mode} fleet only. There is no target argument: every call goes to that fleet.`,
   );
   for (const info of infos) {
