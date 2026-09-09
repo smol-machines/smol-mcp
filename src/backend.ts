@@ -33,12 +33,36 @@ export interface MachineView {
   pid: number | null;
 }
 
+// A published guest port. `host` is the port on the host that forwards to it
+// and is local only: the cloud control plane allocates its own and answers
+// with an ingress URL.
+export interface PortSpec {
+  guest: number;
+  host?: number | undefined;
+}
+
+// A host directory attached to the machine. Local only: the cloud API mounts
+// named volumes, not host paths, and this server has no host to mount from
+// when the fleet is somewhere else.
+export interface MountSpec {
+  source: string;
+  target: string;
+  readonly?: boolean | undefined;
+}
+
 export interface CreateOptions {
   name: string;
   image: string;
   cpus: number;
   memoryMb: number;
   network: NetworkPolicy;
+  ports?: PortSpec[];
+  mounts?: MountSpec[];
+  // Size of the machine's own disk. Local calls it storageGb; the cloud
+  // create request carries it as resources.diskGb.
+  storageGb?: number;
+  // Local only: the cloud machine has no separate overlay disk.
+  overlayGb?: number;
   // Workload command. Local only: the cloud create request has no such field
   // and the cloud client drops it (see CloudClient.createMachine).
   cmd?: string[];

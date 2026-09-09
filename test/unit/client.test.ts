@@ -70,6 +70,35 @@ describe("LocalClient parsing", () => {
     expect(body).not.toHaveProperty("memory");
   });
 
+  it("publishes a port on the same host number by default, and carries mounts and both disk sizes", async () => {
+    seen.length = 0;
+    await client.createMachine({
+      name: "b",
+      image: "alpine",
+      cpus: 1,
+      memoryMb: 1024,
+      network: { mode: "open" },
+      ports: [{ guest: 8080 }, { guest: 80, host: 8081 }],
+      mounts: [{ source: "/host/code", target: "/workspace", readonly: true }],
+      storageGb: 40,
+      overlayGb: 5,
+    });
+    const body = JSON.parse(seen[0]?.body ?? "{}") as Record<string, unknown>;
+    // The spec requires both halves of a mapping, so a caller who names only
+    // the guest port gets the same number on the host rather than a 400.
+    expect(body.ports).toEqual([{ host: 8080, guest: 8080 }, { host: 8081, guest: 80 }]);
+    expect(body.mounts).toEqual([{ source: "/host/code", target: "/workspace", readonly: true }]);
+    expect(body.storageGb).toBe(40);
+    expect(body.overlayGb).toBe(5);
+  });
+
+  it("sends no ports, mounts or disk fields when the caller named none", async () => {
+    seen.length = 0;
+    await client.createMachine({ name: "b", image: "alpine", cpus: 1, memoryMb: 1024, network: { mode: "open" }, ports: [], mounts: [] });
+    const body = JSON.parse(seen[0]?.body ?? "{}") as Record<string, unknown>;
+    for (const key of ["ports", "mounts", "storageGb", "overlayGb"]) expect(body, key).not.toHaveProperty(key);
+  });
+
   it("carries an egress allow-list in allowedHosts, which the API enforces on the in-guest pull", async () => {
     seen.length = 0;
     await client.createMachine({ name: "b", image: "alpine", cpus: 1, memoryMb: 1024, network: { mode: "allow", hosts: ["registry-1.docker.io"], cidrs: [] } });

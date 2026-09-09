@@ -1,6 +1,6 @@
 // Orchestration above a backend: readiness, ephemeral naming, run-once.
 import { randomBytes } from "node:crypto";
-import type { CallCtx, MachineBackend, MachineView, NetworkPolicy } from "./backend.js";
+import type { CallCtx, MachineBackend, MachineView, MountSpec, NetworkPolicy, PortSpec } from "./backend.js";
 import { BackendError } from "./backend.js";
 import type { Config } from "./config.js";
 import { shapeResult, toArgv } from "./output.js";
@@ -93,6 +93,10 @@ export interface CreateArgs extends NetworkArgs {
   image: string;
   cpus?: number | undefined;
   memoryMb?: number | undefined;
+  ports?: PortSpec[] | undefined;
+  mounts?: MountSpec[] | undefined;
+  storageGb?: number | undefined;
+  overlayGb?: number | undefined;
   cmd?: string[] | undefined;
   env?: Record<string, string> | undefined;
   start?: boolean | undefined;
@@ -107,6 +111,10 @@ export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx 
     cpus: args.cpus ?? m.cfg.cpus,
     memoryMb: args.memoryMb ?? m.cfg.memoryMb,
     network: networkPolicy(args, "open"),
+    ...(args.ports ? { ports: args.ports } : {}),
+    ...(args.mounts ? { mounts: args.mounts } : {}),
+    ...(args.storageGb !== undefined ? { storageGb: args.storageGb } : {}),
+    ...(args.overlayGb !== undefined ? { overlayGb: args.overlayGb } : {}),
     cmd: args.cmd ?? KEEPALIVE_CMD,
     ...(args.env ? { env: args.env } : {}),
     ...(ephemeral ? { ttlSeconds: m.cfg.ephemeralTtlSecs } : {}),

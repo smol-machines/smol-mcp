@@ -111,6 +111,22 @@ describe("CloudClient", () => {
     expect(body).not.toHaveProperty("ports");
   });
 
+  it("publishes a guest port, sizes the one disk with resources.diskGb, and refuses a host mount", async () => {
+    seen.length = 0;
+    await client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "open" }, ports: [{ guest: 8080, host: 9999 }], storageGb: 40 });
+    const body = JSON.parse(seen[0]?.body ?? "{}") as Record<string, unknown>;
+    // The control plane allocates the host side and answers with an ingress
+    // URL, so a host number a local mapping carries has nowhere to go.
+    expect(body.ports).toEqual([{ port: 8080 }]);
+    expect(body.resources).toEqual({ cpus: 1, memoryMb: 256, diskGb: 40 });
+    await expect(
+      client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "open" }, mounts: [{ source: "/host", target: "/workspace" }] }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("local only") });
+    await expect(
+      client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "open" }, overlayGb: 5 }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  });
+
   it("resolves a name to an id before calling a route that takes one", async () => {
     seen.length = 0;
     const m = await client.getMachine("mcp-once-abcd");

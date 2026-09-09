@@ -11,7 +11,7 @@ import {
   MachineInfoSchema,
   PullImageResponseSchema,
 } from "../api.js";
-import type { ExecRequest, ImageInfo, MachineInfo } from "../api.js";
+import type { CreateMachineRequest, ExecRequest, ImageInfo, MachineInfo } from "../api.js";
 import { BackendError } from "../backend.js";
 import type { CallCtx, CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
 import { httpCall, parseEndpoint } from "../http.js";
@@ -125,7 +125,7 @@ export class LocalClient implements MachineBackend {
   }
 
   async createMachine(opts: CreateOptions, ctx: CallCtx = {}): Promise<MachineView> {
-    const body = {
+    const body: CreateMachineRequest = {
       name: opts.name,
       image: opts.image,
       cpus: opts.cpus,
@@ -133,6 +133,10 @@ export class LocalClient implements MachineBackend {
       ...toLocalNetwork(opts.network),
       ...(opts.cmd ? { cmd: opts.cmd } : {}),
       ...(opts.env ? { env: Object.entries(opts.env).map(([name, value]) => ({ name, value })) } : {}),
+      ...(opts.ports && opts.ports.length > 0 ? { ports: opts.ports.map((p) => ({ host: p.host ?? p.guest, guest: p.guest })) } : {}),
+      ...(opts.mounts && opts.mounts.length > 0 ? { mounts: opts.mounts } : {}),
+      ...(opts.storageGb !== undefined ? { storageGb: opts.storageGb } : {}),
+      ...(opts.overlayGb !== undefined ? { overlayGb: opts.overlayGb } : {}),
     };
     const res = await this.call("POST", `${API}/machines`, { json: body, signal: ctx.signal });
     if (res.status !== 200) throw apiError(res, `create machine ${opts.name}`);

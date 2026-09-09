@@ -26,7 +26,7 @@ shape whichever target answers it.
 |---|---|---|
 | `list-machines` | local, cloud | |
 | `get-machine` | local, cloud | Cloud resolves a name to an id with one extra list call. |
-| `create-machine` | local, cloud | Starts the machine and waits until commands run in it. |
+| `create-machine` | local, cloud | Starts the machine and waits until commands run in it. Publishes ports and sizes the disk on both targets; `mounts` and `overlayGb` are local only. |
 | `run-command` | local, cloud | Returns `{stdout, stderr, exitCode, truncated, timedOut}`. |
 | `run-once` | local, cloud | Create, start, exec, delete. Deletes the machine even on timeout. |
 | `read-file` | local, cloud | |

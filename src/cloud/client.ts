@@ -227,13 +227,28 @@ export class CloudClient implements MachineBackend {
   }
 
   async createMachine(opts: CreateOptions, ctx: CallCtx = {}): Promise<MachineView> {
+    // A host path has no meaning on a fleet that is somewhere else, and the
+    // cloud mount takes a named volume rather than a path, so this is a
+    // refusal and not a silently dropped field.
+    if (opts.mounts && opts.mounts.length > 0) {
+      throw new BackendError("mounts are local only: a cloud machine has no host filesystem to mount from", "UNSUPPORTED");
+    }
+    if (opts.overlayGb !== undefined) {
+      throw new BackendError("overlayGb is local only: a cloud machine has one disk, sized with storageGb", "UNSUPPORTED");
+    }
+
     // No cmd: the cloud create request has no workload field, and a machine
     // here does not need one kept alive because exec auto-starts it.
+    //
+    // `ports` publishes a guest port; the control plane allocates the host
+    // side and answers with an ingress URL, so the host number a local
+    // mapping carries has nowhere to go here.
     const body = {
       name: opts.name,
       source: { type: "image", reference: opts.image },
-      resources: { cpus: opts.cpus, memoryMb: opts.memoryMb },
+      resources: { cpus: opts.cpus, memoryMb: opts.memoryMb, ...(opts.storageGb !== undefined ? { diskGb: opts.storageGb } : {}) },
       network: toCloudNetwork(opts.network),
+      ...(opts.ports && opts.ports.length > 0 ? { ports: opts.ports.map((p) => ({ port: p.guest })) } : {}),
       ...(opts.env ? { env: opts.env } : {}),
       ...(opts.ttlSeconds !== undefined ? { ttlSeconds: opts.ttlSeconds } : {}),
     };

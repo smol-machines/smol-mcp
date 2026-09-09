@@ -41,6 +41,16 @@ export function toolInputs(mode: TargetMode) {
       network,
       allowHosts,
       allowCidrs,
+      ports: z
+        .array(z.object({ guest: z.number().int().positive().describe("Port inside the machine"), host: z.number().int().positive().optional().describe("Port on the host. Local only, and the guest port by default; on cloud the control plane allocates the host side and answers with an ingress URL.") }))
+        .optional()
+        .describe("Guest ports to publish. On cloud a published port is reached through the machine's ingress or its authenticated connect route, and blocked egress is refused alongside one."),
+      mounts: z
+        .array(z.object({ source: z.string().min(1).describe("Host path"), target: z.string().min(1).describe("Path inside the machine"), readonly: z.boolean().optional() }))
+        .optional()
+        .describe("Host directories to attach. Local only: a cloud machine has no host filesystem to mount from."),
+      storageGb: z.number().int().positive().optional().describe("Size of the machine's own disk in GiB. Sent as storageGb locally and as resources.diskGb on cloud."),
+      overlayGb: z.number().int().positive().optional().describe("Overlay disk size in GiB. Local only: a cloud machine has one disk."),
       cmd: z.array(z.string()).optional().describe("Workload command. Default keeps the container alive (sleep loop). Local only; the cloud create request has no such field."),
       env: envMap,
       start: z.boolean().optional().describe("Start and wait for readiness (default true)"),

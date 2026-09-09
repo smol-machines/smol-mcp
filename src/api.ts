@@ -59,6 +59,12 @@ export interface CreateMachineRequest {
   allowedCidrs?: string[];
   cmd?: string[];
   env?: { name: string; value: string }[];
+  // The spec spells a port mapping host:guest and both are required, so a
+  // caller who names only the guest port gets the same number on the host.
+  ports?: { host: number; guest: number }[];
+  mounts?: { source: string; target: string; readonly?: boolean | undefined }[];
+  storageGb?: number;
+  overlayGb?: number;
 }
 
 export interface ExecRequest {
