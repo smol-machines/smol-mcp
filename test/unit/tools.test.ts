@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { toolInputs } from "../../src/tools.js";
+import { toolAnnotations, toolInputs } from "../../src/tools.js";
 import type { ToolName } from "../../src/tools.js";
 import { toArgv, truncate, shapeResult } from "../../src/output.js";
 
@@ -103,6 +103,39 @@ describe("what the descriptions promise about egress", () => {
     }
     expect(all.length).toBeGreaterThan(10);
     for (const text of all) expect(text, text).not.toMatch(/enforc/i);
+  });
+});
+
+describe("tool annotations", () => {
+  it("annotates every tool, so a new one without hints fails here", () => {
+    // A client decides what to confirm from these. A tool that carries none
+    // is treated as the most dangerous shape by a careful client and as the
+    // safest by a careless one, and neither is what we meant.
+    expect(Object.keys(toolAnnotations).sort()).toEqual(names.slice().sort());
+  });
+
+  it("marks the four that only read, and nothing else", () => {
+    const readOnly = names.filter((n) => toolAnnotations[n].readOnlyHint === true);
+    expect(readOnly.sort()).toEqual(["get-machine", "list-machines", "machine-logs", "read-file"]);
+  });
+
+  it("marks the two that destroy what is already there", () => {
+    // write-file overwrites; delete-machine is the obvious one. A stop is not
+    // destructive: the machine starts again with everything it had.
+    const destructive = names.filter((n) => toolAnnotations[n].destructiveHint === true);
+    expect(destructive.sort()).toEqual(["delete-machine", "write-file"]);
+  });
+
+  it("marks the three that can be repeated safely", () => {
+    const idempotent = names.filter((n) => toolAnnotations[n].idempotentHint === true);
+    expect(idempotent.sort()).toEqual(["pull-image", "start-machine", "stop-machine"]);
+    for (const n of idempotent) expect(toolAnnotations[n].destructiveHint, n).toBe(false);
+  });
+
+  it("marks the three that reach a registry, and no others", () => {
+    const openWorld = names.filter((n) => toolAnnotations[n].openWorldHint === true);
+    expect(openWorld.sort()).toEqual(["create-machine", "pull-image", "run-once"]);
+    for (const n of names) expect(typeof toolAnnotations[n].openWorldHint, n).toBe("boolean");
   });
 });
 

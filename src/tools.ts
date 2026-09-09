@@ -1,6 +1,7 @@
 // Tool vocabulary and schemas. One vocabulary for both targets: the two
 // backends normalise their own API's shapes behind it.
 import { z } from "zod";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { TargetMode } from "./config.js";
 
 export const TargetSchema = z
@@ -139,6 +140,30 @@ export const machineOutput = {
   createdAt: z.number(),
   image: z.string().nullable(),
   pid: z.number().nullable(),
+};
+
+// The hints the MCP spec defines, so a client can decide what to confirm and
+// what to run without asking. They are hints, not permissions: nothing here
+// enforces them, and a client that ignores them loses nothing but the warning.
+//
+// destructiveHint is about the tool's own effect on state that already
+// exists, which is why write-file carries it (it overwrites) and stop-machine
+// does not (a stopped machine starts again with everything it had).
+// openWorldHint marks the three that reach a registry.
+export const toolAnnotations: Record<ToolName, ToolAnnotations> = {
+  "list-machines": { readOnlyHint: true, openWorldHint: false },
+  "get-machine": { readOnlyHint: true, openWorldHint: false },
+  "read-file": { readOnlyHint: true, openWorldHint: false },
+  "machine-logs": { readOnlyHint: true, openWorldHint: false },
+  "delete-machine": { destructiveHint: true, openWorldHint: false },
+  "write-file": { destructiveHint: true, openWorldHint: false },
+  "stop-machine": { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  "start-machine": { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  "pull-image": { destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  "create-machine": { destructiveHint: false, openWorldHint: true },
+  "run-once": { destructiveHint: false, openWorldHint: true },
+  "run-command": { destructiveHint: false, openWorldHint: false },
+  "branch-machine": { destructiveHint: false, openWorldHint: false },
 };
 
 export const toolDescriptions: Record<ToolName, string> = {

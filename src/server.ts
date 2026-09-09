@@ -20,7 +20,7 @@ import type { Machines } from "./machines.js";
 import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import type { Overflow } from "./output.js";
 import { TARGETS_URI, serverInstructions, targetInfos } from "./targets.js";
-import { commandResultOutput, machineOutput, toolDescriptions, toolInputs } from "./tools.js";
+import { commandResultOutput, machineOutput, toolAnnotations, toolDescriptions, toolInputs } from "./tools.js";
 import type { ToolName } from "./tools.js";
 
 export const SERVER_VERSION = "0.1.0";
@@ -247,7 +247,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     return {};
   });
 
-  registered["list-machines"] = server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a, extra) => {
+  registered["list-machines"] = server.registerTool("list-machines", { description: toolDescriptions["list-machines"], annotations: toolAnnotations["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a, extra) => {
     try {
       const list = await (await pick(a.target)).backend.listMachines(ctxOf(extra));
       return ok({ machines: list.map(machineView) });
@@ -256,7 +256,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["get-machine"] = server.registerTool("get-machine", { description: toolDescriptions["get-machine"], inputSchema: inputs["get-machine"], outputSchema: machineOutput }, async (a, extra) => {
+  registered["get-machine"] = server.registerTool("get-machine", { description: toolDescriptions["get-machine"], annotations: toolAnnotations["get-machine"], inputSchema: inputs["get-machine"], outputSchema: machineOutput }, async (a, extra) => {
     try {
       return ok(machineView(await (await pick(a.target)).backend.getMachine(a.name, ctxOf(extra))));
     } catch (err) {
@@ -264,7 +264,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["create-machine"] = server.registerTool("create-machine", { description: toolDescriptions["create-machine"], inputSchema: inputs["create-machine"], outputSchema: { machine: z.object(machineOutput), ephemeral: z.boolean(), ready: z.boolean() } }, async (a, extra) => {
+  registered["create-machine"] = server.registerTool("create-machine", { description: toolDescriptions["create-machine"], annotations: toolAnnotations["create-machine"], inputSchema: inputs["create-machine"], outputSchema: { machine: z.object(machineOutput), ephemeral: z.boolean(), ready: z.boolean() } }, async (a, extra) => {
     try {
       const r = await ops.createMachine(await pick(a.target), a, ctxOf(extra));
       return ok({ machine: machineView(r.machine), ephemeral: r.ephemeral, ready: r.ready });
@@ -273,7 +273,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["run-command"] = server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: inputs["run-command"], outputSchema: { ...commandResultOutput, startedMachine: z.boolean() } }, async (a, extra) => {
+  registered["run-command"] = server.registerTool("run-command", { description: toolDescriptions["run-command"], annotations: toolAnnotations["run-command"], inputSchema: inputs["run-command"], outputSchema: { ...commandResultOutput, startedMachine: z.boolean() } }, async (a, extra) => {
     try {
       const r = await ops.runCommandOnMachine(await pick(a.target), a.name, a, ctxOf(extra));
       return ok({ ...r }, overflowLinks(chooseTarget(a.target), a.name, r.overflow));
@@ -282,7 +282,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["run-once"] = server.registerTool("run-once", { description: toolDescriptions["run-once"], inputSchema: inputs["run-once"], outputSchema: { ...commandResultOutput, machine: z.string() } }, async (a, extra) => {
+  registered["run-once"] = server.registerTool("run-once", { description: toolDescriptions["run-once"], annotations: toolAnnotations["run-once"], inputSchema: inputs["run-once"], outputSchema: { ...commandResultOutput, machine: z.string() } }, async (a, extra) => {
     try {
       return ok({ ...(await ops.runOnce(await pick(a.target), a, ctxOf(extra))) });
     } catch (err) {
@@ -290,7 +290,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number(), offset: z.number(), bytes: z.number(), eof: z.boolean(), startedMachine: z.boolean() } }, async (a, extra) => {
+  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], annotations: toolAnnotations["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number(), offset: z.number(), bytes: z.number(), eof: z.boolean(), startedMachine: z.boolean() } }, async (a, extra) => {
     try {
       const r = await ops.readFile(await pick(a.target), a.name, a.path, a, ctxOf(extra));
       return ok({ path: a.path, content: r.content.toString(a.encoding), encoding: a.encoding, size: r.size, offset: r.offset, bytes: r.content.length, eof: r.eof, startedMachine: r.startedMachine });
@@ -299,7 +299,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["write-file"] = server.registerTool("write-file", { description: toolDescriptions["write-file"], inputSchema: inputs["write-file"], outputSchema: { path: z.string(), size: z.number(), startedMachine: z.boolean() } }, async (a, extra) => {
+  registered["write-file"] = server.registerTool("write-file", { description: toolDescriptions["write-file"], annotations: toolAnnotations["write-file"], inputSchema: inputs["write-file"], outputSchema: { path: z.string(), size: z.number(), startedMachine: z.boolean() } }, async (a, extra) => {
     try {
       const r = await ops.writeFile(await pick(a.target), a.name, a.path, Buffer.from(a.content, a.encoding), ctxOf(extra));
       return ok({ path: r.path, size: r.size, startedMachine: r.startedMachine });
@@ -308,7 +308,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["start-machine"] = server.registerTool("start-machine", { description: toolDescriptions["start-machine"], inputSchema: inputs["start-machine"], outputSchema: { machine: z.object(machineOutput), ready: z.boolean() } }, async (a, extra) => {
+  registered["start-machine"] = server.registerTool("start-machine", { description: toolDescriptions["start-machine"], annotations: toolAnnotations["start-machine"], inputSchema: inputs["start-machine"], outputSchema: { machine: z.object(machineOutput), ready: z.boolean() } }, async (a, extra) => {
     try {
       const r = await ops.startMachine(await pick(a.target), a.name, a.wait ?? true, ctxOf(extra));
       return ok({ machine: machineView(r.machine), ready: r.ready });
@@ -317,7 +317,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["branch-machine"] = server.registerTool("branch-machine", { description: toolDescriptions["branch-machine"], inputSchema: inputs["branch-machine"], outputSchema: { machine: z.object(machineOutput), ready: z.boolean() } }, async (a, extra) => {
+  registered["branch-machine"] = server.registerTool("branch-machine", { description: toolDescriptions["branch-machine"], annotations: toolAnnotations["branch-machine"], inputSchema: inputs["branch-machine"], outputSchema: { machine: z.object(machineOutput), ready: z.boolean() } }, async (a, extra) => {
     try {
       const r = await ops.branchMachine(await pick(a.target), a.name, a.childName, a.wait ?? true, ctxOf(extra));
       return ok({ machine: machineView(r.machine), ready: r.ready });
@@ -326,7 +326,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["stop-machine"] = server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], inputSchema: inputs["stop-machine"], outputSchema: machineOutput }, async (a, extra) => {
+  registered["stop-machine"] = server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], annotations: toolAnnotations["stop-machine"], inputSchema: inputs["stop-machine"], outputSchema: machineOutput }, async (a, extra) => {
     try {
       return ok(machineView(await (await pick(a.target)).backend.stopMachine(a.name, ctxOf(extra))));
     } catch (err) {
@@ -334,7 +334,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["delete-machine"] = server.registerTool("delete-machine", { description: toolDescriptions["delete-machine"], inputSchema: inputs["delete-machine"], outputSchema: { deleted: z.string() } }, async (a, extra) => {
+  registered["delete-machine"] = server.registerTool("delete-machine", { description: toolDescriptions["delete-machine"], annotations: toolAnnotations["delete-machine"], inputSchema: inputs["delete-machine"], outputSchema: { deleted: z.string() } }, async (a, extra) => {
     try {
       return ok({ deleted: await ops.deleteMachine(await pick(a.target), a.name, ctxOf(extra)) });
     } catch (err) {
@@ -342,7 +342,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["machine-logs"] = server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], inputSchema: inputs["machine-logs"], outputSchema: { lines: z.array(z.string()), cursor: z.string(), truncated: z.boolean() } }, async (a, extra) => {
+  registered["machine-logs"] = server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], annotations: toolAnnotations["machine-logs"], inputSchema: inputs["machine-logs"], outputSchema: { lines: z.array(z.string()), cursor: z.string(), truncated: z.boolean() } }, async (a, extra) => {
     try {
       return ok({ ...(await ops.logs(await pick(a.target), a.name, a, ctxOf(extra))) });
     } catch (err) {
@@ -350,7 +350,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["pull-image"] = server.registerTool("pull-image", { description: toolDescriptions["pull-image"], inputSchema: inputs["pull-image"], outputSchema: { reference: z.string(), digest: z.string(), size: z.number(), architecture: z.string(), os: z.string(), layerCount: z.number() } }, async (a, extra) => {
+  registered["pull-image"] = server.registerTool("pull-image", { description: toolDescriptions["pull-image"], annotations: toolAnnotations["pull-image"], inputSchema: inputs["pull-image"], outputSchema: { reference: z.string(), digest: z.string(), size: z.number(), architecture: z.string(), os: z.string(), layerCount: z.number() } }, async (a, extra) => {
     try {
       const img = await (await pick(a.target)).backend.pullImage(a.name, a.image, ctxOf(extra));
       return ok({ reference: img.reference, digest: img.digest, size: img.size, architecture: img.architecture, os: img.os, layerCount: img.layerCount });
