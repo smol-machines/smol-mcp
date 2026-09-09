@@ -291,3 +291,38 @@ describe("reporting a machine the cloud target starts for us", () => {
     expect(m.backend.calls.map((c) => c.op)).toEqual(["exec"]);
   });
 });
+
+describe("readFile ranges", () => {
+  const fleet = (over = {}) => {
+    const b = new FakeBackend();
+    b.files.set("m:/big", Buffer.from("0123456789"));
+    return { backend: b, cfg: testConfig({ maxOutputBytes: 4, ...over }), state: undefined, session: SESSION };
+  };
+
+  it("returns the head within the output budget and says the file is longer", async () => {
+    // Without a range the whole file went into one tool result, so a file
+    // past the model's budget arrived cut with nothing saying where to
+    // resume.
+    const r = await readFile(fleet(), "m", "/big");
+    expect(r.content.toString()).toBe("0123");
+    expect(r).toMatchObject({ size: 10, offset: 0, eof: false });
+  });
+
+  it("pages from an offset and reports the end of the file", async () => {
+    const r = await readFile(fleet(), "m", "/big", { offset: 4, length: 6 });
+    expect(r.content.toString()).toBe("456789");
+    expect(r).toMatchObject({ size: 10, offset: 4, eof: true });
+  });
+
+  it("clamps an offset past the end to an empty read at the end", async () => {
+    const r = await readFile(fleet(), "m", "/big", { offset: 99 });
+    expect(r.content).toHaveLength(0);
+    expect(r).toMatchObject({ size: 10, offset: 10, eof: true });
+  });
+
+  it("honours a length larger than the budget when the caller asks for one", async () => {
+    const r = await readFile(fleet(), "m", "/big", { length: 10 });
+    expect(r.content.toString()).toBe("0123456789");
+    expect(r.eof).toBe(true);
+  });
+});

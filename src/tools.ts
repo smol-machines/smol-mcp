@@ -83,6 +83,8 @@ export function toolInputs(mode: TargetMode) {
       name,
       path: z.string().min(1).describe("Absolute path inside the machine"),
       encoding: z.enum(["utf8", "base64"]).default("utf8"),
+      offset: z.number().int().nonnegative().optional().describe("Byte to start at. Default 0."),
+      length: z.number().int().positive().optional().describe("How many bytes to return. Default: to the end of the file, or as many as the output budget allows."),
     },
     "write-file": {
       ...target,

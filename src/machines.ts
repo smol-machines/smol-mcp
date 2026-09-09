@@ -205,11 +205,6 @@ export async function runCommandOnMachine(m: Machines, name: string, args: RunAr
   return { ...(await runCommand(m, name, args, ctx)), startedMachine };
 }
 
-export async function readFile(m: Machines, name: string, path: string, ctx: CallCtx = {}): Promise<{ content: Buffer; startedMachine: boolean }> {
-  const startedMachine = await willAutoStart(m, name, ctx);
-  return { content: await m.backend.readFile(name, path, ctx), startedMachine };
-}
-
 export interface RunOnceArgs extends RunArgs, NetworkArgs {
   image: string;
   cpus?: number | undefined;
@@ -253,6 +248,26 @@ export async function runOnce(m: Machines, args: RunOnceArgs, ctx: CallCtx = {})
   m.state?.remove(name);
   if (failure !== undefined) throw failure;
   return { ...(result as CommandResult), machine: name };
+}
+
+export interface ReadArgs {
+  offset?: number | undefined;
+  length?: number | undefined;
+}
+
+// A byte range of a file, plus what the caller needs to ask for the next one,
+// plus whether reading it was what started the machine.
+//
+// The whole file crosses the wire from the guest either way, because neither
+// files route takes a range; what the range bounds is the tool result, which
+// is what a model pays for and what used to arrive silently cut.
+export async function readFile(m: Machines, name: string, path: string, args: ReadArgs = {}, ctx: CallCtx = {}) {
+  const startedMachine = await willAutoStart(m, name, ctx);
+  const whole = await m.backend.readFile(name, path, ctx);
+  const offset = Math.min(args.offset ?? 0, whole.length);
+  const length = Math.min(args.length ?? m.cfg.maxOutputBytes, whole.length - offset);
+  const content = whole.subarray(offset, offset + length);
+  return { content, size: whole.length, offset, eof: offset + length >= whole.length, startedMachine };
 }
 
 export async function writeFile(m: Machines, name: string, path: string, content: Buffer, ctx: CallCtx = {}) {

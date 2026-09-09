@@ -182,10 +182,10 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number(), startedMachine: z.boolean() } }, async (a, extra) => {
+  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number(), offset: z.number(), bytes: z.number(), eof: z.boolean(), startedMachine: z.boolean() } }, async (a, extra) => {
     try {
-      const r = await ops.readFile(await pick(a.target), a.name, a.path, ctxOf(extra));
-      return ok({ path: a.path, content: r.content.toString(a.encoding), encoding: a.encoding, size: r.content.length, startedMachine: r.startedMachine });
+      const r = await ops.readFile(await pick(a.target), a.name, a.path, a, ctxOf(extra));
+      return ok({ path: a.path, content: r.content.toString(a.encoding), encoding: a.encoding, size: r.size, offset: r.offset, bytes: r.content.length, eof: r.eof, startedMachine: r.startedMachine });
     } catch (err) {
       return fail(err);
     }
