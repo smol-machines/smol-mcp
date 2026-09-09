@@ -19,14 +19,19 @@ export function truncate(text: string, maxBytes: number): { text: string; trunca
 }
 
 // The API reports a server-side timeout as exit 124 with a marker on stderr.
+//
+// `truncated` covers both cuts: the client-side budget below, and the one the
+// API made before this ever saw the bytes. A result that reports only the
+// first tells a caller its output is complete when a megabyte of it is gone.
 export function shapeResult(r: ExecResult, maxBytes: number): CommandResult {
   const out = truncate(r.stdout, maxBytes);
   const err = truncate(r.stderr, maxBytes);
+  const serverSide = r.stdoutTruncated === true || r.stderrTruncated === true;
   return {
     stdout: out.text,
     stderr: err.text,
     exitCode: r.exitCode,
-    truncated: out.truncated || err.truncated,
+    truncated: out.truncated || err.truncated || serverSide,
     timedOut: r.exitCode === 124 && r.stderr.includes("command timed out"),
   };
 }

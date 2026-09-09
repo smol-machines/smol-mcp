@@ -92,6 +92,11 @@ export interface ExecResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  // Set when the API cut the stream itself. The cloud API caps a text stream
+  // at 1 MiB and says so in these two fields; the local API does not cap and
+  // does not carry them.
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
 }
 
 // What the caller can still say once a call is under way. The protocol has

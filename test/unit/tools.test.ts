@@ -120,6 +120,16 @@ describe("output shaping", () => {
     expect(truncate("small", 10)).toEqual({ text: "small", truncated: false });
   });
 
+  it("reports a cut the API made, not only the one this server made", () => {
+    // The cloud exec response carries these two flags and they used to be
+    // parsed and dropped, so a result that lost a megabyte server side
+    // reported truncated: false and read as complete.
+    const r = shapeResult({ exitCode: 0, stdout: "short", stderr: "", stdoutTruncated: true }, 1024);
+    expect(r.truncated).toBe(true);
+    expect(shapeResult({ exitCode: 0, stdout: "short", stderr: "", stderrTruncated: true }, 1024).truncated).toBe(true);
+    expect(shapeResult({ exitCode: 0, stdout: "short", stderr: "" }, 1024).truncated).toBe(false);
+  });
+
   it("reads the exit code from the body and flags the server-side timeout", () => {
     const r = shapeResult({ exitCode: 3, stdout: "out\n", stderr: "err\n" }, 1024);
     expect(r).toEqual({ stdout: "out\n", stderr: "err\n", exitCode: 3, truncated: false, timedOut: false });

@@ -312,7 +312,13 @@ export class CloudClient implements MachineBackend {
       timeoutMs: clientTimeoutMs ?? ((req.timeoutSecs ?? 120) + 30) * 1000,
       signal: ctx.signal,
     });
-    return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+    return {
+      exitCode: r.exitCode,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      ...(r.stdoutTruncated === true ? { stdoutTruncated: true } : {}),
+      ...(r.stderrTruncated === true ? { stderrTruncated: true } : {}),
+    };
   }
 
   // The files route takes no parameter that any published schema names, and a
@@ -322,6 +328,12 @@ export class CloudClient implements MachineBackend {
   async readFile(nameOrId: string, path: string, ctx: CallCtx = {}): Promise<Buffer> {
     const r = await this.exec(nameOrId, { command: ["sh", "-c", `base64 < ${shellQuote(path)}`], timeoutSecs: 120 }, undefined, ctx);
     if (r.exitCode !== 0) throw new BackendError(`read ${path}: exit ${r.exitCode}: ${r.stderr.trim().slice(0, 200)}`, "READ_FAILED");
+    // The exec text stream is capped server side. Decoding a cut base64
+    // stream returns a shorter file with no error, which is the one failure a
+    // caller cannot detect from the bytes it got.
+    if (r.stdoutTruncated === true) {
+      throw new BackendError(`read ${path}: the file is larger than one exec response carries`, "TRUNCATED");
+    }
     return Buffer.from(r.stdout.replace(/\s+/g, ""), "base64");
   }
 

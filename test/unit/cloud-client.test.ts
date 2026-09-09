@@ -52,6 +52,9 @@ beforeAll(async () => {
       if (url === `/v1/machines/${ID}/exec?output=text`) {
         const req_ = JSON.parse(body) as { command: string[]; stdin?: string };
         if (req_.command.join(" ").includes("base64 -d")) return send(200, JSON.stringify({ stdout: "", stderr: "", exitCode: 0, durationMs: 4, machineId: ID }));
+        if (req_.command.join(" ").includes("base64 < '/workspace/big.bin'")) {
+          return send(200, JSON.stringify({ stdout: "aGVsbG8=\n", stderr: "", exitCode: 0, durationMs: 4, stdoutTruncated: true, machineId: ID }));
+        }
         if (req_.command.join(" ").includes("base64 <")) return send(200, JSON.stringify({ stdout: "aGVsbG8=\n", stderr: "", exitCode: 0, durationMs: 4, machineId: ID }));
         // The trap: a guest command that exited 42 is still HTTP 200.
         return send(200, JSON.stringify({ stdout: "to-stdout\n", stderr: "to-stderr\n", exitCode: 42, durationMs: 73, machineId: ID }));
@@ -219,6 +222,12 @@ describe("CloudClient", () => {
     // exec may well have run the command; a second attempt bills twice.
     await expect(client.createMachine({ name: "mcp-broken", image: "alpine", cpus: 1, memoryMb: 256, network: { mode: "open" } })).rejects.toThrow();
     expect(seen.filter((s) => s.method === "POST")).toHaveLength(1);
+  });
+
+  it("refuses a read the exec response cut, rather than returning the short file", async () => {
+    // Decoding a cut base64 stream returns fewer bytes with no error, and the
+    // caller cannot tell a short file from a short read.
+    await expect(client.readFile(ID, "/workspace/big.bin")).rejects.toMatchObject({ code: "TRUNCATED" });
   });
 
   it("refuses the two local-only tools by name", async () => {
