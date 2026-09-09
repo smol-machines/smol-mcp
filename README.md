@@ -197,7 +197,7 @@ Each one has a test.
 | b | `run-command` reads `{stdout, stderr, exitCode}` from the body, never from the HTTP status: both APIs answer 200 for a command that exited non-zero. | `test/unit/client.test.ts`, `test/unit/cloud-client.test.ts`, and a real `exit 42` in both integration suites. |
 | c | Local parity is stated by the paths this server calls, not by `serve openapi`'s `info.version`, which is hardcoded at `0.5.2` on a v1.14.3 binary. | `src/parity.ts`, asserted in `test/integration/local.test.ts` including the assertion that `info.version` is *not* the version. |
 | d | The local create field is `network`, not `net`, and `memoryMb`, not `memory`. | `test/unit/client.test.ts` asserts the exact request body; `test/unit/tools.test.ts` asserts the CLI spellings are stripped by the schema. |
-| e | The cloud connect bridge answers `allow: GET,HEAD`, so an MCP client cannot reach a guest through it; the machine's ingress URL carries POST. | Not a unit test: `test/unit/http-transport.test.ts` covers the transport, and the Verified section records the probe. |
+| e | The cloud connect bridge answers `allow: GET,HEAD`, so an MCP client cannot reach a guest through it; the machine's ingress URL carries POST. | Not a unit test: `test/unit/http-transport.test.ts` covers the transport, and the bridge's methods were probed by hand. |
 | f | A server hosted behind an ingress cannot assume `authorization` is free for a token of its own. | `test/unit/http-transport.test.ts` initializes a session with another credential in `authorization` and the server token in `x-smol-mcp-token`. |
 
 Two more, from the same source:
@@ -227,199 +227,24 @@ SMOL_MCP_IT=1 npm run test:cloud
 ```
 
 The cloud suite reads `GET /v1/account` before it creates anything and after
-every test, and fails the moment period spend passes USD 1.00. It deletes what
-it makes in the test that makes it, and its `afterAll` asserts no `mcp-`
-machine is left on the fleet.
+every test, and stops the moment period spend passes its own ceiling. It
+deletes what it makes in the test that makes it, and its `afterAll` asserts no
+`mcp-` machine is left on the fleet.
 
 ## Verified
 
-Run on 2026-09-08 against smolvm **v1.14.3** (isolated install, `HOME` not the
-real one) on macOS 26.6.2 Apple Silicon, and against smol cloud at
-`https://api.smolmachines.com`.
+Both transports and both targets were run end to end before this tree was
+published: the unit suite on a host with no hypervisor and no key, the local
+integration suite against `smolvm` v1.14.3 on macOS on Apple Silicon, and the
+cloud integration suite against the smol cloud API. A real MCP client over
+stdio (`scripts/smoke.mjs`) listed the tools and ran a command on each target,
+and the same client over Streamable HTTP (`scripts/smoke-http.mjs`) did the
+same against a server hosted on a smol cloud machine, once with the agent
+inside the machine speaking stdio and once outside it over the machine's
+ingress URL. The two authentication gates were both provoked from another
+host: a request with no server token and a request with the wrong one are each
+a 401.
 
-The whole suite was run twice from a clean state. Both runs: **8 files, 69
-tests, all passed** (56 unit, 7 local integration, 2 stdio EOF, 4 cloud). The
-second run started with no serve listening, an empty ephemeral-state file,
-`smolvm machine list` reporting `No machines found`, and `GET /v1/machines`
-returning `[]`; it ended the same way, and its own `afterAll` reported
-`leaked=0`.
-
-Cloud spend was read from `GET /v1/account` before and after each run.
-`periodCost.totalMicros` moved by a two-figure number of micros across both
-runs, well under the suite's own 1000000 micro ceiling, and `amountDueMicros`
-stayed 0. A lifecycle machine's settled bill comes back from
-`DELETE ...?includeUsage=true`.
-
-A real MCP client over stdio, `node scripts/smoke.mjs both`:
-
-```
-$ tools/list
-list-machines get-machine create-machine run-command run-once read-file write-file stop-machine delete-machine machine-logs pull-image
-
-smol-mcp: started smolvm serve 1.14.3 (pid 14305) at unix:///tmp/.../api.sock
-$ tools/call list-machines {"target":"local"}   [0.5s]
-{
-  "machines": []
-}
-
-$ tools/call run-once {"target":"local","image":"alpine","command":"echo hello","cpus":1,"memoryMb":2048}   [2.8s]
-{
-  "stdout": "hello\n",
-  "stderr": "",
-  "exitCode": 0,
-  "truncated": false,
-  "timedOut": false,
-  "machine": "mcp-once-c3678b7d"
-}
-
-$ tools/call list-machines {"target":"cloud"}   [0.2s]
-{
-  "machines": []
-}
-
-$ tools/call run-once {"target":"cloud","image":"alpine:3.20","command":"echo hello","cpus":1,"memoryMb":256}   [2.6s]
-{
-  "stdout": "hello\n",
-  "stderr": "",
-  "exitCode": 0,
-  "truncated": false,
-  "timedOut": false,
-  "machine": "mcp-once-0c949d8d"
-}
-
-smol-mcp: stdin EOF, cleaning up
-```
-
-### Hosted in a smol machine: the agent inside it
-
-`mcp-host-a`, `node:22-alpine`, 1 cpu, 256 MiB (the smallest the plan bills
-for), `network.mode: "open"`, no published port, `ttlSeconds: 3600` as a
-backstop. The account key was passed in the create-time `env` and nothing was
-written to a file in the guest. The guest reported `node v22.23.2`,
-`Linux 6.12.95 x86_64`, 1 cpu, 264 MiB of RAM, a 19.7 G `/workspace` and a
-132 M `/tmp`.
-
-`npm pack` produced a 43929 byte tarball; it went in through
-`POST /v1/machines/{id}/exec` with 58572 base64 characters on stdin
-(`base64 -d > /opt/mcp/smol-mcp-0.1.0.tgz`, 0.4 s), and the sha256 inside the
-guest matched the one on this host. `npm install ./smol-mcp-0.1.0.tgz` added
-95 packages in 11 s, 28.1 M of `node_modules`, on one core and 256 MiB.
-
-Then, inside the guest, `node scripts/smoke.mjs guest`:
-
-```
-$ tools/list
-list-machines get-machine create-machine run-command run-once read-file write-file stop-machine delete-machine machine-logs pull-image
-
-$ tools/call list-machines {"target":"local"}   [0.0s]
-ERROR LOCAL_UNAVAILABLE: the local target is unavailable on this host: this host has no /dev/kvm, so it cannot start a virtual machine; a smol machine guest has neither, so use target "cloud" from inside one
-
-$ tools/call list-machines {"target":"cloud"}   [0.2s]
-{
-  "machines": [
-    {
-      "id": "mach-0123456789abcdef0123456789abcdef",
-      "name": "mcp-host-a",
-      "state": "started",
-      "cpus": 1,
-      "memoryMb": 256,
-      "network": "open",
-      "createdAt": 1788890678,
-      "image": "node:22-alpine",
-      "pid": null
-    }
-  ]
-}
-
-$ tools/call run-once {"target":"cloud","image":"alpine:3.20","command":"echo hello","cpus":1,"memoryMb":256}   [2.4s]
-{
-  "stdout": "hello\n",
-  "stderr": "",
-  "exitCode": 0,
-  "truncated": false,
-  "timedOut": false,
-  "machine": "mcp-once-663eaef8"
-}
-
-smol-mcp: stdin EOF, cleaning up
-```
-
-The local refusal is instant (0.0 s) and names the reason. The machine it
-created from inside itself was deleted by `run-once` before the call returned,
-and `DELETE ...?includeUsage=true` returned its settled uptime and cost.
-
-### Hosted in a smol machine: the agent outside it
-
-`mcp-host-b`, same image and size, `"ports": [{"port": 8080}]`,
-`network.mode: "open"`, `ttlSeconds: 3600`. Started with
-`node dist/http-cli.js --host 0.0.0.0 --port 8080`, `SMOL_MCP_AUTH_TOKEN` from
-the create-time env:
-
-```
-smol-mcp: listening for MCP over HTTP on http://0.0.0.0:8080/mcp
-smol-mcp: http session 0e81a1cc-a105-4256-b9ff-56513e2ae565 opened (1 open)
-```
-
-Once something listened, the record reported `ready: true` and allocated
-`url: https://mcp-host-b-0123456789ab.apps.smolmachines.com`. From this Mac,
-`node scripts/smoke-http.mjs https://mcp-host-b-0123456789ab.apps.smolmachines.com/mcp`:
-
-```
-$ connect https://mcp-host-b-0123456789ab.apps.smolmachines.com/mcp   [0.7s]
-session 0e81a1cc-a105-4256-b9ff-56513e2ae565
-
-$ tools/list
-list-machines get-machine create-machine run-command run-once read-file write-file stop-machine delete-machine machine-logs pull-image
-
-$ tools/call list-machines {"target":"cloud"}   [0.4s]
-{
-  "machines": [
-    {
-      "id": "mach-fedcba9876543210fedcba9876543210",
-      "name": "mcp-host-b",
-      "state": "started",
-      "cpus": 1,
-      "memoryMb": 256,
-      "network": "open",
-      "createdAt": 1788890992,
-      "image": "node:22-alpine",
-      "pid": null
-    }
-  ]
-}
-
-$ tools/call run-once {"target":"cloud","image":"alpine:3.20","command":"echo hello","cpus":1,"memoryMb":256}   [2.7s]
-{
-  "stdout": "hello\n",
-  "stderr": "",
-  "exitCode": 0,
-  "truncated": false,
-  "timedOut": false,
-  "machine": "mcp-once-192ed9dc"
-}
-
-smol-mcp: session terminated
-```
-
-Both gates were provoked, from this Mac, against the same URL:
-
-```
-account key, no server token     -> 401 {"jsonrpc":"2.0","error":{"code":-32001,"message":"unauthorized: ..."}}
-account key, wrong server token  -> 401 (same)
-server token, no account key     -> 401 Unauthorized: a smolmachines login is required to reach this app
-```
-
-The first two are this server; the third is the ingress, which never reaches
-it.
-
-Neither shape can be reached through the documented connect bridge. With a
-server listening on the published port,
-`GET /v1/machines/{id}/connect/8080/mcp` is a 200 that arrives in the guest as
-`GET /mcp`, but `POST` to the same URL is **405 with `allow: GET,HEAD`**, and
-so is `DELETE`. MCP needs POST, so the ingress URL is the route.
-
-Both shapes together cost a four-figure number of micros, `amountDueMicros`
-stayed 0, and `GET /v1/machines` returned `[]` afterwards.
 
 ## Traps
 
