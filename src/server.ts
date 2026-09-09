@@ -10,6 +10,7 @@ import { CloudClient } from "./cloud/client.js";
 import type { Config, TargetMode } from "./config.js";
 import { resolveTargets } from "./config.js";
 import { StateFile } from "./local/state.js";
+import { MemoryStore } from "./memory-state.js";
 import { ensureServe } from "./local/serve.js";
 import type { ServeHandle } from "./local/serve.js";
 import * as ops from "./machines.js";
@@ -50,6 +51,8 @@ export interface CreateServerOptions {
   log?: (msg: string) => void;
   // Test seam: a backend in place of a real serve.
   localBackend?: MachineBackend;
+  // Test seam: a backend in place of the real cloud API.
+  cloudBackend?: MachineBackend;
   // Identity of the session this server belongs to. Generated when absent.
   session?: string;
 }
@@ -83,9 +86,13 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
   };
   const local = async () => (await serve()).machines;
 
-  // The cloud target keeps no state file: ttlSeconds on the create is the
-  // control plane's own backstop, and it survives this process being killed.
-  const cloud: Machines = { backend: new CloudClient(cfg.cloudUrl, cfg.cloudToken), cfg, state: undefined, session };
+  // The cloud target keeps its record in memory rather than in the runtime
+  // directory: the machines are not this host's, so nothing on this host has
+  // to clean them up after a crash, and the control plane's own ttlSeconds
+  // covers that case. What it does need is a record at all, so the session
+  // that created them deletes them when it ends.
+  const cloudState = new MemoryStore();
+  const cloud: Machines = { backend: opts.cloudBackend ?? new CloudClient(cfg.cloudUrl, cfg.cloudToken), cfg, state: cloudState, session };
 
   // Set once, when a client with elicitation answers which fleet this session
   // is for. From then on the argument is gone from every schema and this is
@@ -264,9 +271,16 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
   let shutdownOnce: Promise<{ deleted: string[]; failed: { name: string; error: string }[] }> | undefined;
   const shutdown = () => {
     shutdownOnce ??= (async () => {
+      // The cloud record first, and unconditionally: a session that only ever
+      // used the cloud target has machines to delete and no serve to stop, and
+      // it used to leave them running to their TTL. A session that created
+      // none pays no call for this.
+      const fromCloud = await ops.cleanupEphemeral(cloud);
+      if (fromCloud.deleted.length > 0) log(`deleted cloud machine(s): ${fromCloud.deleted.join(", ")}`);
+      for (const f of fromCloud.failed) log(`failed to delete ${f.name}: ${f.error}`);
       // Nothing local ever ran: there is no serve to stop and no machine of
       // ours to delete, and starting one now to find that out would be absurd.
-      if (started === undefined) return { deleted: [], failed: [] };
+      if (started === undefined) return fromCloud;
       // A serve that failed to start owns no machine and no process, so there
       // is nothing here to clean up and nothing to report. The call that
       // provoked the failure already returned it; repeating it on the way out
@@ -275,7 +289,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
       try {
         ran = await started;
       } catch {
-        return { deleted: [], failed: [] };
+        return fromCloud;
       }
       const { serve: handle, machines } = ran;
       // Machines first: stopping the serve orphans anything still running.
@@ -283,7 +297,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
       if (result.deleted.length > 0) log(`deleted ephemeral machine(s): ${result.deleted.join(", ")}`);
       for (const f of result.failed) log(`failed to delete ${f.name}: ${f.error}`);
       await handle.stop();
-      return result;
+      return { deleted: [...fromCloud.deleted, ...result.deleted], failed: [...fromCloud.failed, ...result.failed] };
     })();
     return shutdownOnce;
   };

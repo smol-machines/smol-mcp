@@ -124,8 +124,8 @@ suite("local run-once", () => {
     expect(r.exitCode).toBe(124);
     const after = await m.backend.listMachines();
     expect(after.map((x) => x.name)).not.toContain(r.machine);
-    // And the state file no longer claims it, so the EOF sweep has nothing
-    // to retry and nothing to report as a failure.
-    expect(m.state?.read().machines.map((x) => x.name) ?? []).not.toContain(r.machine);
+    // And the record no longer claims it, so the EOF sweep has nothing to
+    // retry and nothing to report as a failure.
+    expect((m.state?.owned(m.session) ?? []).map((x) => x.name)).not.toContain(r.machine);
   });
 });

@@ -5,7 +5,16 @@ import { BackendError } from "./backend.js";
 import type { Config } from "./config.js";
 import { shapeResult, toArgv } from "./output.js";
 import type { CommandResult } from "./output.js";
-import type { StateFile } from "./local/state.js";
+
+// What a target needs to remember about the machines a session created. The
+// local target keeps a file, because a crashed process has to be cleaned up
+// by the next one; the cloud target keeps a list in memory, because its API
+// remembers nothing for us and its own backstops cover a process that dies.
+export interface EphemeralStore {
+  add(name: string, owner: string, id?: string): void;
+  remove(name: string): void;
+  owned(owner: string): { name: string; id: string }[];
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -55,7 +64,7 @@ export async function waitReady(
 export interface Machines {
   backend: MachineBackend;
   cfg: Config;
-  state: StateFile | undefined;
+  state: EphemeralStore | undefined;
   // The session that owns what this record creates. One process can host
   // many, and each cleans up only its own.
   session: string;
@@ -100,7 +109,7 @@ export async function createMachine(m: Machines, args: CreateArgs) {
     ...(args.env ? { env: args.env } : {}),
     ...(ephemeral ? { ttlSeconds: m.cfg.ephemeralTtlSecs } : {}),
   });
-  if (ephemeral) m.state?.add(name, m.session);
+  if (ephemeral) m.state?.add(name, m.session, info.id);
   let started = info;
   let ready = false;
   if (args.start ?? true) {
@@ -197,10 +206,12 @@ export async function cleanupEphemeral(m: Machines): Promise<{ deleted: string[]
   const deleted: string[] = [];
   const failed: { name: string; error: string }[] = [];
   if (!m.state) return { deleted, failed };
-  for (const name of m.state.owned(m.session)) {
+  for (const { name, id } of m.state.owned(m.session)) {
+    // The prefix is checked on the name, never on the id: the id is whatever
+    // the backend's delete route takes and carries no such marker.
     if (!name.startsWith(m.cfg.machinePrefix)) continue;
     try {
-      await m.backend.deleteMachine(name);
+      await m.backend.deleteMachine(id);
       deleted.push(name);
       m.state.remove(name);
     } catch (err) {

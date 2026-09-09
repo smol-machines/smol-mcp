@@ -156,7 +156,7 @@ describe("cleanupEphemeral", () => {
     for (const name of ["mcp-mine", "mcp-dead", "mcp-sibling", "keep"]) await b.createMachine({ name, ...open });
     const state = new StateFile(join(mkdtempSync(join(tmpdir(), "smol-mcp-st-")), "machines.json"));
     state.add("mcp-mine", SESSION);
-    state.add("mcp-dead", "a-session-of-a-crashed-process", 999999999);
+    state.add("mcp-dead", "a-session-of-a-crashed-process", "mcp-dead", 999999999);
     // Another session in this same process. Under a pid-keyed record this one
     // was deleted here, and the session that created it was never told.
     state.add("mcp-sibling", "another-live-session");

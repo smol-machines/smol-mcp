@@ -15,8 +15,11 @@ export class FakeBackend implements MachineBackend {
   execImpl: (name: string, req: ExecOptions) => Promise<ExecResult> = async () => ({ exitCode: 0, stdout: "", stderr: "" });
   deleteImpl: (name: string) => Promise<void> = async () => {};
 
+  // A backend whose id is not the name, the way the cloud API's is.
+  idFor: (name: string) => string = (name) => name;
+
   private info(name: string, state: string): MachineView {
-    return { id: name, name, state, cpus: 2, memoryMb: 2048, network: "open", createdAt: 1700000000, image: "alpine", pid: state === "running" ? 4242 : null };
+    return { id: this.idFor(name), name, state, cpus: 2, memoryMb: 2048, network: "open", createdAt: 1700000000, image: "alpine", pid: state === "running" ? 4242 : null };
   }
   async listMachines() {
     this.calls.push({ op: "list" });
@@ -47,10 +50,11 @@ export class FakeBackend implements MachineBackend {
     this.machines.set(name, m);
     return m;
   }
-  async deleteMachine(name: string) {
-    this.calls.push({ op: "delete", name });
-    await this.deleteImpl(name);
-    if (!this.machines.has(name)) throw new BackendError(`machine '${name}' not found`, "NOT_FOUND");
+  async deleteMachine(nameOrId: string) {
+    this.calls.push({ op: "delete", name: nameOrId });
+    await this.deleteImpl(nameOrId);
+    const name = this.machines.has(nameOrId) ? nameOrId : [...this.machines.keys()].find((k) => this.idFor(k) === nameOrId);
+    if (name === undefined) throw new BackendError(`machine '${nameOrId}' not found`, "NOT_FOUND");
     this.machines.delete(name);
     return { deleted: name };
   }

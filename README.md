@@ -36,9 +36,12 @@ shape whichever target answers it.
 | `machine-logs` | local | The cloud API has an event log, not a console log. |
 | `pull-image` | local | The cloud control plane pulls the image itself at create. |
 
-A machine whose name starts with `mcp-` is ephemeral: this server records it
-and deletes it when the client's stdin closes. A name you choose yourself
-persists.
+A machine whose name starts with `mcp-` is ephemeral: the session that created
+it records it and deletes it when that session ends, on either target. A name
+you choose yourself persists. The local record is a file in the runtime
+directory, so the next start can clean up after a crashed one; the cloud
+record is in memory, and a process that dies with entries in it leaves them to
+the control plane's own idle stop and TTL.
 
 ## Install and run
 
