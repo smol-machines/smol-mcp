@@ -1,11 +1,19 @@
-// Tool vocabulary and schemas. One vocabulary for both targets: every tool
-// takes `target`, and the two backends normalise their own API's shapes.
+// Tool vocabulary and schemas. One vocabulary for both targets: the two
+// backends normalise their own API's shapes behind it.
 import { z } from "zod";
+import type { TargetMode } from "./config.js";
 
 export const TargetSchema = z
   .enum(["local", "cloud"])
-  .default("local")
-  .describe("Which fleet to talk to. local is smolvm serve on this host; cloud is smol cloud at SMOL_CLOUD_URL.");
+  .describe("Which fleet to run this on. local is smolvm serve on this host; cloud is smol cloud at SMOL_CLOUD_URL. Required, with no default: the two fleets bill differently and a machine on one is invisible on the other.");
+
+// The argument exists only when this process reaches both fleets. The
+// declared type keeps it either way so one handler signature serves every
+// mode; a handler reads it as possibly absent, because in a single-target
+// mode it is not in the schema and no client can send it.
+function targetArg(mode: TargetMode): { target: typeof TargetSchema } {
+  return (mode === "both" ? { target: TargetSchema } : {}) as { target: typeof TargetSchema };
+}
 
 const name = z.string().min(1).describe("Machine name");
 const command = z
@@ -19,65 +27,69 @@ const network = z
 const allowHosts = z.array(z.string()).optional().describe("Egress allow-list of hostnames. Overrides network. Local: sent as allowedHosts. Cloud: sent inside the same cidrs list the published schema names, alongside allowCidrs.");
 const allowCidrs = z.array(z.string()).optional().describe("Egress allow-list of CIDR ranges. Overrides network.");
 
-export const toolInputs = {
-  "list-machines": { target: TargetSchema },
-  "get-machine": { target: TargetSchema, name },
-  "create-machine": {
-    target: TargetSchema,
-    name: z.string().min(1).optional().describe("Machine name. Omitted: an ephemeral mcp-<id> name, deleted when this server exits. A name without the mcp- prefix persists."),
-    image: z.string().min(1).describe("OCI image reference, e.g. alpine or python:3.12-alpine"),
-    cpus: z.number().int().positive().optional(),
-    memoryMb: z.number().int().positive().optional(),
-    network,
-    allowHosts,
-    allowCidrs,
-    cmd: z.array(z.string()).optional().describe("Workload command. Default keeps the container alive (sleep loop). Local only; the cloud create request has no such field."),
-    env: envMap,
-    start: z.boolean().optional().describe("Start and wait for readiness (default true)"),
-  },
-  "run-command": {
-    target: TargetSchema,
-    name,
-    command,
-    timeoutSecs: z.number().int().positive().optional(),
-    workdir: z.string().optional(),
-    env: envMap,
-    stdin: z.string().optional(),
-  },
-  "run-once": {
-    target: TargetSchema,
-    image: z.string().min(1),
-    command,
-    timeoutSecs: z.number().int().positive().optional(),
-    workdir: z.string().optional(),
-    env: envMap,
-    stdin: z.string().optional(),
-    cpus: z.number().int().positive().optional(),
-    memoryMb: z.number().int().positive().optional(),
-    network,
-    allowHosts,
-    allowCidrs,
-  },
-  "read-file": {
-    target: TargetSchema,
-    name,
-    path: z.string().min(1).describe("Absolute path inside the machine"),
-    encoding: z.enum(["utf8", "base64"]).default("utf8"),
-  },
-  "write-file": {
-    target: TargetSchema,
-    name,
-    path: z.string().min(1).describe("Absolute path inside the machine"),
-    content: z.string(),
-    encoding: z.enum(["utf8", "base64"]).default("utf8"),
-  },
-  "stop-machine": { target: TargetSchema, name },
-  "delete-machine": { target: TargetSchema, name },
-  "machine-logs": { target: TargetSchema, name, tail: z.number().int().positive().optional() },
-  "pull-image": { target: TargetSchema, name, image: z.string().min(1) },
-} as const;
+export function toolInputs(mode: TargetMode) {
+  const target = targetArg(mode);
+  return {
+    "list-machines": { ...target },
+    "get-machine": { ...target, name },
+    "create-machine": {
+      ...target,
+      name: z.string().min(1).optional().describe("Machine name. Omitted: an ephemeral mcp-<id> name, deleted when this server exits. A name without the mcp- prefix persists."),
+      image: z.string().min(1).describe("OCI image reference, e.g. alpine or python:3.12-alpine"),
+      cpus: z.number().int().positive().optional(),
+      memoryMb: z.number().int().positive().optional(),
+      network,
+      allowHosts,
+      allowCidrs,
+      cmd: z.array(z.string()).optional().describe("Workload command. Default keeps the container alive (sleep loop). Local only; the cloud create request has no such field."),
+      env: envMap,
+      start: z.boolean().optional().describe("Start and wait for readiness (default true)"),
+    },
+    "run-command": {
+      ...target,
+      name,
+      command,
+      timeoutSecs: z.number().int().positive().optional(),
+      workdir: z.string().optional(),
+      env: envMap,
+      stdin: z.string().optional(),
+    },
+    "run-once": {
+      ...target,
+      image: z.string().min(1),
+      command,
+      timeoutSecs: z.number().int().positive().optional(),
+      workdir: z.string().optional(),
+      env: envMap,
+      stdin: z.string().optional(),
+      cpus: z.number().int().positive().optional(),
+      memoryMb: z.number().int().positive().optional(),
+      network,
+      allowHosts,
+      allowCidrs,
+    },
+    "read-file": {
+      ...target,
+      name,
+      path: z.string().min(1).describe("Absolute path inside the machine"),
+      encoding: z.enum(["utf8", "base64"]).default("utf8"),
+    },
+    "write-file": {
+      ...target,
+      name,
+      path: z.string().min(1).describe("Absolute path inside the machine"),
+      content: z.string(),
+      encoding: z.enum(["utf8", "base64"]).default("utf8"),
+    },
+    "stop-machine": { ...target, name },
+    "delete-machine": { ...target, name },
+    "machine-logs": { ...target, name, tail: z.number().int().positive().optional() },
+    "pull-image": { ...target, name, image: z.string().min(1) },
+  } as const;
+}
 
-export type ToolName = keyof typeof toolInputs;
+export type ToolInputs = ReturnType<typeof toolInputs>;
+export type ToolName = keyof ToolInputs;
 
 export const commandResultOutput = {
   stdout: z.string(),

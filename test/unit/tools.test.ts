@@ -1,17 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { toolInputs } from "../../src/tools.js";
+import type { ToolName } from "../../src/tools.js";
 import { toArgv, truncate, shapeResult } from "../../src/output.js";
 
-const schema = <K extends keyof typeof toolInputs>(name: K) => z.object(toolInputs[name]);
+const both = toolInputs("both");
+const schema = <K extends ToolName>(name: K) => z.object(both[name]);
+const names = Object.keys(both) as ToolName[];
 
 describe("tool input schemas", () => {
-  it("default target is local on every tool", () => {
-    for (const name of Object.keys(toolInputs) as (keyof typeof toolInputs)[]) {
-      const s = z.object(toolInputs[name]);
+  it("requires target on every tool when both fleets are reachable, with no default", () => {
+    for (const name of names) {
+      const s = z.object(both[name]);
       const sample: Record<string, unknown> = { name: "m", image: "alpine", command: ["true"], path: "/x", content: "" };
-      const parsed = s.parse(sample) as { target: string };
-      expect(parsed.target, name).toBe("local");
+      // A machine on one fleet is invisible on the other and the two bill
+      // differently, so a defaulted target sends work to the wrong one
+      // silently.
+      expect(() => s.parse(sample), name).toThrow();
+      expect((s.parse({ ...sample, target: "cloud" }) as { target: string }).target, name).toBe("cloud");
+    }
+  });
+
+  it("drops target from every schema in a single-target mode", () => {
+    for (const mode of ["local", "cloud"] as const) {
+      for (const name of names) {
+        const inputs = toolInputs(mode)[name] as Record<string, unknown>;
+        expect(inputs, `${mode} ${name}`).not.toHaveProperty("target");
+        const sample: Record<string, unknown> = { name: "m", image: "alpine", command: ["true"], path: "/x", content: "", target: "cloud" };
+        expect(z.object(toolInputs(mode)[name]).parse(sample), `${mode} ${name}`).not.toHaveProperty("target");
+      }
     }
   });
 
@@ -20,38 +37,38 @@ describe("tool input schemas", () => {
   });
 
   it("run-command accepts argv or a shell string", () => {
-    expect(schema("run-command").parse({ name: "m", command: ["echo", "hi"] }).command).toEqual(["echo", "hi"]);
-    expect(schema("run-command").parse({ name: "m", command: "echo hi" }).command).toBe("echo hi");
-    expect(() => schema("run-command").parse({ name: "m", command: [] })).toThrow();
+    expect(schema("run-command").parse({ target: "local", name: "m", command: ["echo", "hi"] }).command).toEqual(["echo", "hi"]);
+    expect(schema("run-command").parse({ target: "local", name: "m", command: "echo hi" }).command).toBe("echo hi");
+    expect(() => schema("run-command").parse({ target: "local", name: "m", command: [] })).toThrow();
   });
 
   it("create-machine requires an image and rejects the CLI flag spelling (constraint d)", () => {
-    expect(() => schema("create-machine").parse({})).toThrow();
-    const parsed = schema("create-machine").parse({ image: "alpine", memoryMb: 512 });
+    expect(() => schema("create-machine").parse({ target: "local" })).toThrow();
+    const parsed = schema("create-machine").parse({ target: "local", image: "alpine", memoryMb: 512 });
     expect(parsed.memoryMb).toBe(512);
     // `net` and `memory` are the CLI's names. They are not in the schema, and
     // zod strips them, so the request body can never carry them.
-    const stripped = schema("create-machine").parse({ image: "alpine", net: true, memory: 512 }) as Record<string, unknown>;
+    const stripped = schema("create-machine").parse({ target: "local", image: "alpine", net: true, memory: 512 }) as Record<string, unknown>;
     expect(stripped).not.toHaveProperty("net");
     expect(stripped).not.toHaveProperty("memory");
   });
 
   it("an egress allow-list survives the schema, and a bare network mode is optional", () => {
-    const parsed = schema("run-once").parse({ image: "alpine", command: "true", allowCidrs: ["10.0.0.0/8"] });
+    const parsed = schema("run-once").parse({ target: "local", image: "alpine", command: "true", allowCidrs: ["10.0.0.0/8"] });
     expect(parsed.allowCidrs).toEqual(["10.0.0.0/8"]);
     expect(parsed.network).toBeUndefined();
-    expect(() => schema("run-once").parse({ image: "alpine", command: "true", network: "off" })).toThrow();
+    expect(() => schema("run-once").parse({ target: "local", image: "alpine", command: "true", network: "off" })).toThrow();
   });
 
   it("read-file and write-file default to utf8", () => {
-    expect(schema("read-file").parse({ name: "m", path: "/a" }).encoding).toBe("utf8");
-    expect(schema("write-file").parse({ name: "m", path: "/a", content: "x" }).encoding).toBe("utf8");
+    expect(schema("read-file").parse({ target: "local", name: "m", path: "/a" }).encoding).toBe("utf8");
+    expect(schema("write-file").parse({ target: "local", name: "m", path: "/a", content: "x" }).encoding).toBe("utf8");
   });
 });
 
 describe("what the descriptions promise about egress", () => {
-  const described = (tool: keyof typeof toolInputs, field: string): string => {
-    const shape = toolInputs[tool] as Record<string, { description?: string }>;
+  const described = (tool: ToolName, field: string): string => {
+    const shape = both[tool] as Record<string, { description?: string }>;
     return shape[field]?.description ?? "";
   };
 
@@ -79,7 +96,7 @@ describe("what the descriptions promise about egress", () => {
     // A description that promises the platform enforces something is a
     // promise this server cannot keep and cannot check.
     const all: string[] = [];
-    for (const shape of Object.values(toolInputs)) {
+    for (const shape of Object.values(both)) {
       for (const field of Object.values(shape as Record<string, { description?: string }>)) {
         if (typeof field.description === "string") all.push(field.description);
       }

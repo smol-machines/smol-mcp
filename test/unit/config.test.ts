@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigSchema, loadConfig } from "../../src/config.js";
+import { ConfigSchema, loadConfig, resolveTargets } from "../../src/config.js";
 
 describe("config", () => {
   it("ships the tethered defaults", () => {
@@ -35,6 +35,16 @@ describe("config", () => {
     const file = join(dir, "config.json");
     writeFileSync(file, JSON.stringify({ memory: 512 }));
     expect(() => loadConfig({}, file)).toThrow(/unrecognized/i);
+  });
+
+  it("auto resolves to both when a cloud token is configured and to local otherwise", () => {
+    expect(resolveTargets(ConfigSchema.parse({}))).toBe("local");
+    expect(resolveTargets(ConfigSchema.parse({ cloudToken: "k" }))).toBe("both");
+    // An explicit mode wins over the token: a host with a token that only
+    // wants the local fleet must be able to say so and lose the argument.
+    expect(resolveTargets(ConfigSchema.parse({ cloudToken: "k", targets: "local" }))).toBe("local");
+    expect(resolveTargets(ConfigSchema.parse({ targets: "cloud" }))).toBe("cloud");
+    expect(resolveTargets(loadConfig({ SMOL_MCP_TARGETS: "both" }, "/nonexistent/config.json"))).toBe("both");
   });
 
   it("uses XDG_RUNTIME_DIR for the runtime dir when set", () => {

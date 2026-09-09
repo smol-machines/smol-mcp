@@ -81,6 +81,26 @@ describe("http transport", () => {
     await transport.close();
   });
 
+  it("serves no target argument in a single-target mode, and a required one in both", async () => {
+    const single = await start();
+    const a = await connect(single.url);
+    const local = (await a.client.listTools()).tools.find((t) => t.name === "list-machines");
+    expect(local?.inputSchema.properties ?? {}).not.toHaveProperty("target");
+    await a.transport.close();
+    await running?.close();
+
+    const pair = await start({ cloudToken: "a-token" });
+    const b = await connect(pair.url);
+    const listed = (await b.client.listTools()).tools.find((t) => t.name === "list-machines");
+    expect(listed?.inputSchema.properties).toHaveProperty("target");
+    expect(listed?.inputSchema.required).toContain("target");
+    // No default: a call that names no fleet fails rather than landing on
+    // one of them, because the two bill differently.
+    const res = await b.client.callTool({ name: "list-machines", arguments: {} });
+    expect(res.isError).toBe(true);
+    await b.transport.close();
+  });
+
   it("deletes the session's ephemeral machines when the session is terminated", async () => {
     const { backend, url } = await start();
     const { client, transport } = await connect(url);

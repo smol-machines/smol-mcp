@@ -5,7 +5,8 @@ import { z } from "zod";
 import type { MachineBackend, MachineView } from "./backend.js";
 import { BackendError } from "./backend.js";
 import { CloudClient } from "./cloud/client.js";
-import type { Config } from "./config.js";
+import type { Config, TargetMode } from "./config.js";
+import { resolveTargets } from "./config.js";
 import { StateFile } from "./local/state.js";
 import { ensureServe } from "./local/serve.js";
 import type { ServeHandle } from "./local/serve.js";
@@ -17,6 +18,8 @@ export const SERVER_VERSION = "0.1.0";
 
 export interface SmolMcp {
   server: McpServer;
+  // The targets this process was started to reach.
+  mode: TargetMode;
   // Resolving this starts `smolvm serve` if nothing is already listening.
   local(): Promise<Machines>;
   cloud: Machines;
@@ -47,6 +50,7 @@ export interface CreateServerOptions {
 
 export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> {
   const { cfg } = opts;
+  const mode = resolveTargets(cfg);
   const log = opts.log ?? ((msg: string) => process.stderr.write(`smol-mcp: ${msg}\n`));
   const state = StateFile.inRuntimeDir(cfg.runtimeDir);
 
@@ -73,11 +77,20 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
   // The cloud target keeps no state file: ttlSeconds on the create is the
   // control plane's own backstop, and it survives this process being killed.
   const cloud: Machines = { backend: new CloudClient(cfg.cloudUrl, cfg.cloudToken), cfg, state: undefined };
-  const pick = async (target: "local" | "cloud") => (target === "cloud" ? cloud : await local());
+
+  // In a single-target mode there is no argument to read: the mode decides,
+  // and an argument a client sent anyway was stripped by the schema.
+  const chooseTarget = (arg: "local" | "cloud" | undefined): "local" | "cloud" => {
+    if (mode !== "both") return mode;
+    if (arg !== undefined) return arg;
+    throw new BackendError("this server reaches both fleets, so every call has to name target as local or cloud", "TARGET_REQUIRED");
+  };
+  const pick = async (target: "local" | "cloud" | undefined) => (chooseTarget(target) === "cloud" ? cloud : await local());
 
   const server = new McpServer({ name: "smol-mcp", version: SERVER_VERSION });
+  const inputs = toolInputs(mode);
 
-  server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: toolInputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a) => {
+  server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a) => {
     try {
       const list = await (await pick(a.target)).backend.listMachines();
       return ok({ machines: list.map(machineView) });
@@ -86,7 +99,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("get-machine", { description: toolDescriptions["get-machine"], inputSchema: toolInputs["get-machine"], outputSchema: machineOutput }, async (a) => {
+  server.registerTool("get-machine", { description: toolDescriptions["get-machine"], inputSchema: inputs["get-machine"], outputSchema: machineOutput }, async (a) => {
     try {
       return ok(machineView(await (await pick(a.target)).backend.getMachine(a.name)));
     } catch (err) {
@@ -94,7 +107,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("create-machine", { description: toolDescriptions["create-machine"], inputSchema: toolInputs["create-machine"], outputSchema: { machine: z.object(machineOutput), ephemeral: z.boolean(), ready: z.boolean() } }, async (a) => {
+  server.registerTool("create-machine", { description: toolDescriptions["create-machine"], inputSchema: inputs["create-machine"], outputSchema: { machine: z.object(machineOutput), ephemeral: z.boolean(), ready: z.boolean() } }, async (a) => {
     try {
       const r = await ops.createMachine((await pick(a.target)), a);
       return ok({ machine: machineView(r.machine), ephemeral: r.ephemeral, ready: r.ready });
@@ -103,7 +116,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: toolInputs["run-command"], outputSchema: commandResultOutput }, async (a) => {
+  server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: inputs["run-command"], outputSchema: commandResultOutput }, async (a) => {
     try {
       return ok({ ...(await ops.runCommand((await pick(a.target)), a.name, a)) });
     } catch (err) {
@@ -111,7 +124,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("run-once", { description: toolDescriptions["run-once"], inputSchema: toolInputs["run-once"], outputSchema: { ...commandResultOutput, machine: z.string() } }, async (a) => {
+  server.registerTool("run-once", { description: toolDescriptions["run-once"], inputSchema: inputs["run-once"], outputSchema: { ...commandResultOutput, machine: z.string() } }, async (a) => {
     try {
       return ok({ ...(await ops.runOnce((await pick(a.target)), a)) });
     } catch (err) {
@@ -119,7 +132,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: toolInputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number() } }, async (a) => {
+  server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number() } }, async (a) => {
     try {
       const buf = await (await pick(a.target)).backend.readFile(a.name, a.path);
       return ok({ path: a.path, content: buf.toString(a.encoding), encoding: a.encoding, size: buf.length });
@@ -128,7 +141,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("write-file", { description: toolDescriptions["write-file"], inputSchema: toolInputs["write-file"], outputSchema: { path: z.string(), size: z.number() } }, async (a) => {
+  server.registerTool("write-file", { description: toolDescriptions["write-file"], inputSchema: inputs["write-file"], outputSchema: { path: z.string(), size: z.number() } }, async (a) => {
     try {
       const r = await ops.writeFile((await pick(a.target)), a.name, a.path, Buffer.from(a.content, a.encoding));
       return ok({ path: r.path, size: r.size });
@@ -137,7 +150,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], inputSchema: toolInputs["stop-machine"], outputSchema: machineOutput }, async (a) => {
+  server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], inputSchema: inputs["stop-machine"], outputSchema: machineOutput }, async (a) => {
     try {
       return ok(machineView(await (await pick(a.target)).backend.stopMachine(a.name)));
     } catch (err) {
@@ -145,7 +158,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("delete-machine", { description: toolDescriptions["delete-machine"], inputSchema: toolInputs["delete-machine"], outputSchema: { deleted: z.string() } }, async (a) => {
+  server.registerTool("delete-machine", { description: toolDescriptions["delete-machine"], inputSchema: inputs["delete-machine"], outputSchema: { deleted: z.string() } }, async (a) => {
     try {
       return ok({ deleted: await ops.deleteMachine((await pick(a.target)), a.name) });
     } catch (err) {
@@ -153,7 +166,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], inputSchema: toolInputs["machine-logs"], outputSchema: { lines: z.array(z.string()) } }, async (a) => {
+  server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], inputSchema: inputs["machine-logs"], outputSchema: { lines: z.array(z.string()) } }, async (a) => {
     try {
       return ok({ lines: await (await pick(a.target)).backend.logs(a.name, a.tail ?? cfg.logsTail) });
     } catch (err) {
@@ -161,7 +174,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  server.registerTool("pull-image", { description: toolDescriptions["pull-image"], inputSchema: toolInputs["pull-image"], outputSchema: { reference: z.string(), digest: z.string(), size: z.number(), architecture: z.string(), os: z.string(), layerCount: z.number() } }, async (a) => {
+  server.registerTool("pull-image", { description: toolDescriptions["pull-image"], inputSchema: inputs["pull-image"], outputSchema: { reference: z.string(), digest: z.string(), size: z.number(), architecture: z.string(), os: z.string(), layerCount: z.number() } }, async (a) => {
     try {
       const img = await (await pick(a.target)).backend.pullImage(a.name, a.image);
       return ok({ reference: img.reference, digest: img.digest, size: img.size, architecture: img.architecture, os: img.os, layerCount: img.layerCount });
@@ -197,5 +210,5 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     return shutdownOnce;
   };
 
-  return { server, local, cloud, serve: async () => (await serve()).serve, shutdown };
+  return { server, mode, local, cloud, serve: async () => (await serve()).serve, shutdown };
 }

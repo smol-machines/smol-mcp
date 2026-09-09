@@ -3,6 +3,7 @@
 import type { ImageInfo } from "../../src/api.js";
 import { BackendError } from "../../src/backend.js";
 import type { CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView } from "../../src/backend.js";
+import { ConfigSchema } from "../../src/config.js";
 import type { Config } from "../../src/config.js";
 
 export class FakeBackend implements MachineBackend {
@@ -79,26 +80,5 @@ export class FakeBackend implements MachineBackend {
 }
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    smolvm: "smolvm",
-    localUrl: "",
-    runtimeDir: "/nonexistent",
-    machinePrefix: "mcp-",
-    memoryMb: 2048,
-    cpus: 2,
-    runOnceNetwork: "open" as const,
-    ephemeralTtlSecs: 3600,
-    execTimeoutSecs: 120,
-    maxOutputBytes: 65536,
-    readyTimeoutSecs: 5,
-    serveStartTimeoutSecs: 60,
-    logsTail: 100,
-    cloudUrl: "https://api.smolmachines.com",
-    cloudToken: "",
-    httpHost: "127.0.0.1",
-    httpPort: 8080,
-    httpPath: "/mcp",
-    authToken: "",
-    ...overrides,
-  };
+  return { ...ConfigSchema.parse({}), runtimeDir: "/nonexistent", readyTimeoutSecs: 5, ...overrides };
 }

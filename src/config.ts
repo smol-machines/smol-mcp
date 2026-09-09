@@ -33,6 +33,11 @@ export const ConfigSchema = z.object({
   logsTail: z.number().int().positive().default(100),
   cloudUrl: z.string().default("https://api.smolmachines.com"),
   cloudToken: z.string().default(""),
+  // Which targets this process serves, decided once at startup. "auto" is
+  // both when a cloud token is configured and local otherwise. In a
+  // single-target mode the `target` argument is not in any tool schema, so a
+  // client cannot name a fleet this process was not started to reach.
+  targets: z.enum(["auto", "local", "cloud", "both"]).default("auto"),
   // The HTTP transport only (dist/http-cli.js); stdio reads none of these.
   // The bind is loopback by default because publishing the port is a decision
   // to be made once, in the open, and not the consequence of a default.
@@ -62,6 +67,7 @@ const ENV_KEYS: Record<keyof Config, string> = {
   logsTail: "SMOL_MCP_LOGS_TAIL",
   cloudUrl: "SMOL_CLOUD_URL",
   cloudToken: "SMOL_CLOUD_TOKEN",
+  targets: "SMOL_MCP_TARGETS",
   httpHost: "SMOL_MCP_HTTP_HOST",
   httpPort: "SMOL_MCP_HTTP_PORT",
   httpPath: "SMOL_MCP_HTTP_PATH",
@@ -114,4 +120,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, fileOverride?: 
   const merged = ConfigSchema.parse({ ...fromFile, ...fromEnv });
   if (merged.runtimeDir === "") merged.runtimeDir = defaultRuntimeDir(env);
   return merged;
+}
+
+// The three modes a running server can be in. "auto" never reaches a tool
+// schema: it is resolved here, at startup.
+export type TargetMode = "local" | "cloud" | "both";
+
+export function resolveTargets(cfg: Config): TargetMode {
+  if (cfg.targets !== "auto") return cfg.targets;
+  return cfg.cloudToken === "" ? "local" : "both";
 }
