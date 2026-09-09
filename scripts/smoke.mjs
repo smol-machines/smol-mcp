@@ -17,7 +17,10 @@ const image = { local: process.env.SMOL_MCP_IT_IMAGE ?? "alpine", cloud: process
 
 const list = (target) => ({ name: "list-machines", arguments: { target } });
 // Smallest shape the cloud plan bills for; the local target ignores both.
-const runOnce = (target) => ({ name: "run-once", arguments: { target, image: image[target], command: "echo hello", cpus: 1, memoryMb: target === "cloud" ? 256 : 2048 } });
+// network open because the image is pulled from a registry: on the local
+// target that pull happens inside the guest, so a machine with the default no
+// egress cannot start from one. See the README's egress section.
+const runOnce = (target) => ({ name: "run-once", arguments: { target, image: image[target], command: "echo hello", cpus: 1, memoryMb: target === "cloud" ? 256 : 2048, network: "open" } });
 const plan = {
   local: [list("local"), runOnce("local")],
   cloud: [list("cloud"), runOnce("cloud")],
