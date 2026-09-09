@@ -24,8 +24,13 @@ const machine = {
 
 let server: Server;
 let client: CloudClient;
+let baseUrl = "";
 const seen: { method: string; url: string; auth: string; body: string }[] = [];
 let flaky = 0;
+// The files route as a deployment either has it or does not, so one suite can
+// drive both halves of the fallback.
+const files = new Map<string, Buffer>();
+let filesRouteServed = true;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -59,6 +64,19 @@ beforeAll(async () => {
         // The trap: a guest command that exited 42 is still HTTP 200.
         return send(200, JSON.stringify({ stdout: "to-stdout\n", stderr: "to-stderr\n", exitCode: 42, durationMs: 73, machineId: ID }));
       }
+      const filesPrefix = `/v1/machines/${ID}/files/`;
+      if (url.startsWith(filesPrefix)) {
+        if (!filesRouteServed) return send(404, "");
+        const key = url.slice(filesPrefix.length);
+        if (req.method === "PUT") {
+          files.set(key, Buffer.from(body));
+          return send(200, JSON.stringify({ path: `/${key}`, size: body.length }));
+        }
+        const have = files.get(key);
+        if (have === undefined) return send(404, "no such file");
+        res.writeHead(200, { "content-type": "application/octet-stream" });
+        return res.end(have);
+      }
       if (url === "/v1/machines/mach-gone") return send(404, "machine not found");
       if (url === "/v1/machines/mach-flaky") {
         flaky += 1;
@@ -78,7 +96,8 @@ beforeAll(async () => {
     });
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  client = new CloudClient(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, "test-token");
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  client = new CloudClient(baseUrl, "test-token");
 });
 
 afterAll(async () => {
@@ -187,13 +206,16 @@ describe("CloudClient", () => {
     expect(err.message).toContain("invalid api key");
   });
 
-  it("round-trips a file through exec, since the files route takes no documented parameter", async () => {
+  it("round-trips a file through the documented route, path as a suffix with no leading slash", async () => {
     seen.length = 0;
-    expect(await client.writeFile(ID, "/workspace/a b.txt", Buffer.from("hello"))).toEqual({ path: "/workspace/a b.txt", size: 5 });
-    const sent = JSON.parse(seen[0]?.body ?? "{}") as { command: string[]; stdin: string };
-    expect(sent.stdin).toBe(Buffer.from("hello").toString("base64"));
-    expect(sent.command[2]).toContain("'/workspace/a b.txt'");
-    expect((await client.readFile(ID, "/workspace/a b.txt")).toString()).toBe("hello");
+    filesRouteServed = true;
+    const fresh = new CloudClient(baseUrl, "test-token");
+    expect(await fresh.writeFile(ID, "/workspace/a b.txt", Buffer.from("hello"))).toEqual({ path: "/workspace/a b.txt", size: 5 });
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([`PUT /v1/machines/${ID}/files/workspace/a%20b.txt`]);
+    expect((await fresh.readFile(ID, "/workspace/a b.txt")).toString()).toBe("hello");
+    // The route carries the bytes, so nothing goes through exec and nothing
+    // meets the exec response cap.
+    expect(seen.some((s) => s.url.includes("/exec"))).toBe(false);
   });
 
   it("retries a status the service says is temporary, and stops when it answers", async () => {
@@ -224,10 +246,26 @@ describe("CloudClient", () => {
     expect(seen.filter((s) => s.method === "POST")).toHaveLength(1);
   });
 
-  it("refuses a read the exec response cut, rather than returning the short file", async () => {
+  it("falls back to exec when the deployment has no files route", async () => {
+    filesRouteServed = false;
+    const fresh = new CloudClient(baseUrl, "test-token");
+    seen.length = 0;
+    expect(await fresh.writeFile(ID, "/workspace/a b.txt", Buffer.from("hello"))).toEqual({ path: "/workspace/a b.txt", size: 5 });
+    const sent = JSON.parse(seen[1]?.body ?? "{}") as { command: string[]; stdin: string };
+    expect(seen[0]?.method).toBe("PUT");
+    expect(sent.stdin).toBe(Buffer.from("hello").toString("base64"));
+    expect(sent.command[2]).toContain("'/workspace/a b.txt'");
+    expect((await fresh.readFile(ID, "/workspace/a b.txt")).toString()).toBe("hello");
+    filesRouteServed = true;
+  });
+
+  it("refuses a fallback read the exec response cut, rather than returning the short file", async () => {
     // Decoding a cut base64 stream returns fewer bytes with no error, and the
     // caller cannot tell a short file from a short read.
-    await expect(client.readFile(ID, "/workspace/big.bin")).rejects.toMatchObject({ code: "TRUNCATED" });
+    filesRouteServed = false;
+    const fresh = new CloudClient(baseUrl, "test-token");
+    await expect(fresh.readFile(ID, "/workspace/big.bin")).rejects.toMatchObject({ code: "TRUNCATED" });
+    filesRouteServed = true;
   });
 
   it("refuses the two local-only tools by name", async () => {

@@ -321,23 +321,76 @@ export class CloudClient implements MachineBackend {
     };
   }
 
-  // The files route takes no parameter that any published schema names, and a
-  // `?path=` guess answers 404 with an empty body, so there is nothing to code
-  // against. Transfer goes through exec instead: base64 keeps it binary-safe
-  // and it is the same auto-starting path every other cloud call uses.
+  // The documented shape is the path as a suffix with no leading slash:
+  // `PUT /v1/machines/{id}/files/workspace/app.py`, and the same for GET. The
+  // published schema lists the route with only `{id}`, so a deployment that
+  // predates the suffix answers 404 or 405 and the exec fallback below runs
+  // instead. One 2xx from the route settles it for the life of this client:
+  // after that a 404 is a missing file and not a missing route.
+  private filesRoute: "unknown" | "present" | "absent" = "unknown";
+
+  private filesPath(id: string, path: string): string {
+    const suffix = path
+      .split("/")
+      .filter((seg) => seg !== "")
+      .map((seg) => encodeURIComponent(seg))
+      .join("/");
+    return `/v1/machines/${encodeURIComponent(id)}/files/${suffix}`;
+  }
+
+  // A status that says the route is not there, as opposed to one that says
+  // something about the file.
+  private routeMissing(status: number): boolean {
+    return this.filesRoute !== "present" && (status === 404 || status === 405 || status === 501);
+  }
+
   async readFile(nameOrId: string, path: string, ctx: CallCtx = {}): Promise<Buffer> {
+    const id = await this.resolve(nameOrId, ctx);
+    const route = this.filesPath(id, path);
+    const res = await this.raw("GET", route, { timeoutMs: 120_000, signal: ctx.signal });
+    if (res.status >= 200 && res.status < 300) {
+      this.filesRoute = "present";
+      return res.buf;
+    }
+    if (!this.routeMissing(res.status)) throw cloudError("GET", route, res.status, res.text);
+    // A 404 here is either no route or no file, and the fallback is what
+    // tells them apart: if it reads the file, the route was missing; if it
+    // does not, its own error is the one about the file.
+    const buf = await this.readFileByExec(id, path, ctx);
+    this.filesRoute = "absent";
+    return buf;
+  }
+
+  async writeFile(nameOrId: string, path: string, content: Buffer, ctx: CallCtx = {}): Promise<{ path: string; size: number }> {
+    const id = await this.resolve(nameOrId, ctx);
+    const route = this.filesPath(id, path);
+    const res = await this.raw("PUT", route, { body: content, timeoutMs: 120_000, signal: ctx.signal });
+    if (res.status >= 200 && res.status < 300) {
+      this.filesRoute = "present";
+      return { path, size: content.length };
+    }
+    if (!this.routeMissing(res.status)) throw cloudError("PUT", route, res.status, res.text);
+    const written = await this.writeFileByExec(id, path, content, ctx);
+    this.filesRoute = "absent";
+    return written;
+  }
+
+  // The fallback. base64 through exec keeps the bytes binary-safe and uses
+  // the same auto-starting path every other cloud call does, at the cost of
+  // the exec response cap.
+  private async readFileByExec(nameOrId: string, path: string, ctx: CallCtx = {}): Promise<Buffer> {
     const r = await this.exec(nameOrId, { command: ["sh", "-c", `base64 < ${shellQuote(path)}`], timeoutSecs: 120 }, undefined, ctx);
     if (r.exitCode !== 0) throw new BackendError(`read ${path}: exit ${r.exitCode}: ${r.stderr.trim().slice(0, 200)}`, "READ_FAILED");
     // The exec text stream is capped server side. Decoding a cut base64
-    // stream returns a shorter file with no error, which is the one failure a
-    // caller cannot detect from the bytes it got.
+    // stream returns a shorter file with no error, which is the one failure
+    // a caller cannot detect from the bytes it got.
     if (r.stdoutTruncated === true) {
-      throw new BackendError(`read ${path}: the file is larger than one exec response carries`, "TRUNCATED");
+      throw new BackendError(`read ${path}: the file is larger than one exec response carries, and the fallback read path cannot page it`, "TRUNCATED");
     }
     return Buffer.from(r.stdout.replace(/\s+/g, ""), "base64");
   }
 
-  async writeFile(nameOrId: string, path: string, content: Buffer, ctx: CallCtx = {}): Promise<{ path: string; size: number }> {
+  private async writeFileByExec(nameOrId: string, path: string, content: Buffer, ctx: CallCtx = {}): Promise<{ path: string; size: number }> {
     const b64 = content.toString("base64");
     const r = await this.exec(
       nameOrId,

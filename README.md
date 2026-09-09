@@ -280,10 +280,12 @@ a 401.
 - **On the cloud API, a 400 does not mean the body was not JSON.** An empty
   `cidrs` is a 400 with a valid JSON body, so status alone does not separate a
   parse failure from a validation one.
-- **The cloud files route takes no parameter any published schema names**, and
-  a `?path=` guess answers 404 with an empty body. `read-file` and `write-file`
-  on cloud go through exec with base64 instead, which is binary-safe and uses
-  the same auto-starting path as every other cloud call.
+- **The cloud files route takes the path as a suffix**, with no leading slash:
+  `PUT /v1/machines/{id}/files/workspace/app.py`, and the same for `GET`. The
+  published schema lists the route with only `{id}`, so a deployment that
+  predates the suffix answers 404 and `read-file` and `write-file` fall back to
+  exec with base64. The fallback meets the exec response cap, so a read it cut
+  is refused rather than returned short.
 - **The connect bridge is GET and HEAD only.** `POST` to
   `/v1/machines/{id}/connect/{port}/...` is 405 with `allow: GET,HEAD`, so no
   MCP client can speak through it. Use the ingress URL in the machine
