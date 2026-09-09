@@ -1,0 +1,60 @@
+{
+  "name": "smol-mcp",
+  "version": "0.1.0",
+  "private": false,
+  "description": "MCP server for smol machines: one tool vocabulary over smolvm serve on this host and over the smol cloud API",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "smol-machines",
+    "smolvm",
+    "microvm",
+    "sandbox",
+    "agent"
+  ],
+  "homepage": "https://github.com/smol-machines/smol-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smol-machines/smol-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/smol-machines/smol-mcp/issues"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "smol-mcp": "dist/cli.js",
+    "smol-mcp-http": "dist/http-cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:cloud": "vitest run test/integration/cloud.test.ts",
+    "lint": "eslint . && node scripts/check-dashes.mjs",
+    "typecheck": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "22.20.1",
+    "eslint": "9.39.5",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "4.1.11",
+    "globals": "16.5.0"
+  }
+}

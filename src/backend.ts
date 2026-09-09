@@ -1,0 +1,91 @@
+// The target-agnostic surface every tool is written against. Both targets
+// implement it; the two APIs disagree about names, shapes and even about what
+// identifies a machine, so the normalising happens here rather than in a tool.
+import type { ImageInfo } from "./api.js";
+
+// Egress policy, expressed once for both targets.
+//   open     unrestricted outbound
+//   blocked  no outbound at all
+//   allow    outbound only to the listed hosts or CIDRs
+// The local API refuses `blocked` for a machine whose image still has to be
+// pulled from a registry, so the two targets do not have the same default;
+// see the README.
+export interface NetworkPolicy {
+  mode: "open" | "blocked" | "allow";
+  hosts?: string[];
+  cidrs?: string[];
+}
+
+export const OPEN_NETWORK: NetworkPolicy = { mode: "open" };
+
+// One machine, in the shape the tools return. `id` is what the backend's own
+// routes take (a name locally, a mach-... id on cloud) and `name` is what a
+// person typed; locally they are the same string.
+export interface MachineView {
+  id: string;
+  name: string;
+  state: string;
+  cpus: number;
+  memoryMb: number;
+  network: string;
+  createdAt: number;
+  image: string | null;
+  pid: number | null;
+}
+
+export interface CreateOptions {
+  name: string;
+  image: string;
+  cpus: number;
+  memoryMb: number;
+  network: NetworkPolicy;
+  // Workload command. Local only: the cloud create request has no such field
+  // and the cloud client drops it (see CloudClient.createMachine).
+  cmd?: string[];
+  env?: Record<string, string>;
+  // Control-plane backstop that deletes the machine even if this process dies.
+  // Cloud only; the local API has no equivalent, which is why the local target
+  // keeps a state file instead.
+  ttlSeconds?: number;
+}
+
+export interface ExecOptions {
+  command: string[];
+  timeoutSecs?: number;
+  workdir?: string;
+  env?: Record<string, string>;
+  stdin?: string;
+}
+
+export interface ExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface MachineBackend {
+  readonly target: "local" | "cloud";
+  listMachines(): Promise<MachineView[]>;
+  getMachine(name: string): Promise<MachineView>;
+  createMachine(opts: CreateOptions): Promise<MachineView>;
+  startMachine(name: string): Promise<MachineView>;
+  stopMachine(name: string): Promise<MachineView>;
+  // Returns the name that was deleted, plus the settled bill where the API
+  // reports one (cloud does, on DELETE ...?includeUsage=true; local does not).
+  deleteMachine(name: string): Promise<{ deleted: string; usageMicros?: number }>;
+  exec(name: string, req: ExecOptions, clientTimeoutMs?: number): Promise<ExecResult>;
+  readFile(name: string, path: string): Promise<Buffer>;
+  writeFile(name: string, path: string, content: Buffer): Promise<{ path: string; size: number }>;
+  logs(name: string, tail: number): Promise<string[]>;
+  pullImage(name: string, image: string): Promise<ImageInfo>;
+}
+
+export class BackendError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+  ) {
+    super(message);
+    this.name = "BackendError";
+  }
+}
