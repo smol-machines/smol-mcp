@@ -49,6 +49,46 @@ describe("tool input schemas", () => {
   });
 });
 
+describe("what the descriptions promise about egress", () => {
+  const described = (tool: keyof typeof toolInputs, field: string): string => {
+    const shape = toolInputs[tool] as Record<string, { description?: string }>;
+    return shape[field]?.description ?? "";
+  };
+
+  it("names the mechanism the deny is actually sent as, on the two tools that take it", () => {
+    // This string is what an agent reads before it decides whether a machine
+    // is safe to put something in. It said the cloud deny was sent as an
+    // empty allow-list and that it was enforced; the code sends an
+    // unroutable range, and an empty list is refused outright.
+    const expected =
+      "Egress mode. Default open, except run-once on cloud which is blocked. Local: a blocked machine whose image still has to be pulled from a registry is refused by the API; pass open or an allow-list for that create. Cloud: blocked is sent as an allow-list of an unroutable range.";
+    expect(described("create-machine", "network")).toBe(expected);
+    expect(described("run-once", "network")).toBe(expected);
+  });
+
+  it("says where a hostname allow-list goes on each target, and does not call it local only", () => {
+    // The argument is accepted on both targets: the cloud client appends
+    // hostnames to the same list it sends CIDRs in.
+    const expected =
+      "Egress allow-list of hostnames. Overrides network. Local: sent as allowedHosts. Cloud: sent inside the same cidrs list the published schema names, alongside allowCidrs.";
+    expect(described("create-machine", "allowHosts")).toBe(expected);
+    expect(described("run-once", "allowHosts")).toBe(expected);
+  });
+
+  it("promises enforcement of a cloud deny nowhere in any tool description", () => {
+    // A description that promises the platform enforces something is a
+    // promise this server cannot keep and cannot check.
+    const all: string[] = [];
+    for (const shape of Object.values(toolInputs)) {
+      for (const field of Object.values(shape as Record<string, { description?: string }>)) {
+        if (typeof field.description === "string") all.push(field.description);
+      }
+    }
+    expect(all.length).toBeGreaterThan(10);
+    for (const text of all) expect(text, text).not.toMatch(/enforc/i);
+  });
+});
+
 describe("output shaping", () => {
   it("wraps a string command in sh -c", () => {
     expect(toArgv("echo hi")).toEqual(["sh", "-c", "echo hi"]);

@@ -15,8 +15,8 @@ const envMap = z.record(z.string(), z.string()).optional().describe("Environment
 const network = z
   .enum(["open", "blocked"])
   .optional()
-  .describe("Egress mode. Local: blocked is refused when the image still has to be pulled from a registry, so an image machine needs open or an allow-list. Cloud: blocked is sent as an empty allow-list, which is enforced.");
-const allowHosts = z.array(z.string()).optional().describe("Egress allow-list of hostnames. Overrides network. Local only: the cloud API takes CIDRs.");
+  .describe("Egress mode. Default open, except run-once on cloud which is blocked. Local: a blocked machine whose image still has to be pulled from a registry is refused by the API; pass open or an allow-list for that create. Cloud: blocked is sent as an allow-list of an unroutable range.");
+const allowHosts = z.array(z.string()).optional().describe("Egress allow-list of hostnames. Overrides network. Local: sent as allowedHosts. Cloud: sent inside the same cidrs list the published schema names, alongside allowCidrs.");
 const allowCidrs = z.array(z.string()).optional().describe("Egress allow-list of CIDR ranges. Overrides network.");
 
 export const toolInputs = {
