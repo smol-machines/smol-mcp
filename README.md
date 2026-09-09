@@ -440,7 +440,9 @@ npm run test:unit    # no smolvm, no network, no key
 ```
 
 Integration is opt-in, so a clean clone on a host with no hypervisor and no
-key can still run `npm test`.
+key can still run `npm test`. Those three commands are also the whole CI gate,
+for the same reason: booting a machine needs a hypervisor and the cloud suite
+needs an account to bill, and neither belongs on a pull request.
 
 ```bash
 # local: needs smolvm on PATH or in SMOLVM

@@ -1,0 +1,23 @@
+# Everything here runs without a hypervisor and without a key, which is the
+# whole gate this repo can offer: the integration suites need a machine to
+# boot and an account to bill, and neither belongs on a pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
