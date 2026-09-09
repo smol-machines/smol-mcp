@@ -3,6 +3,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeBackend, testConfig } from "./fake-backend.js";
+
+// Every record in this file belongs to one session; the cross-session cases
+// name their own.
+const SESSION = "session-under-test";
 import { StateFile } from "../../src/local/state.js";
 import { cleanupEphemeral, createMachine, networkPolicy, runOnce, waitReady, writeFile, KEEPALIVE_CMD } from "../../src/machines.js";
 
@@ -47,7 +51,7 @@ describe("writeFile waits for readiness", () => {
     };
     const cfg = testConfig({ readyTimeoutSecs: 30 });
     // Fast pause: patch via a very small timeout budget is not needed, the fake returns ready on the 2nd exec.
-    await writeFile({ backend: b, cfg, state: undefined }, "m", "/tmp/x", Buffer.from("hi"));
+    await writeFile({ backend: b, cfg, state: undefined, session: SESSION }, "m", "/tmp/x", Buffer.from("hi"));
     const ops = b.calls.map((c) => c.op);
     const lastExec = ops.lastIndexOf("exec");
     const write = ops.indexOf("write");
@@ -62,7 +66,7 @@ describe("createMachine", () => {
     b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1]}\n`, stderr: "" });
     const state = new StateFile(join(mkdtempSync(join(tmpdir(), "smol-mcp-st-")), "machines.json"));
     const cfg = testConfig();
-    const r = await createMachine({ backend: b, cfg, state }, { image: "alpine" });
+    const r = await createMachine({ backend: b, cfg, state, session: SESSION }, { image: "alpine" });
     expect(r.machine.name.startsWith("mcp-")).toBe(true);
     expect(r.ephemeral).toBe(true);
     expect(r.ready).toBe(true);
@@ -78,7 +82,7 @@ describe("createMachine", () => {
     const b = new FakeBackend();
     b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1]}\n`, stderr: "" });
     const state = new StateFile(join(mkdtempSync(join(tmpdir(), "smol-mcp-st-")), "machines.json"));
-    const r = await createMachine({ backend: b, cfg: testConfig(), state }, { image: "alpine", name: "keep-me", start: false });
+    const r = await createMachine({ backend: b, cfg: testConfig(), state, session: SESSION }, { image: "alpine", name: "keep-me", start: false });
     expect(r.ephemeral).toBe(false);
     expect(r.ready).toBe(false);
     expect(state.read().machines).toEqual([]);
@@ -89,7 +93,7 @@ describe("runOnce", () => {
   it("is create, start, exec, delete on the plain path", async () => {
     const b = new FakeBackend();
     b.execImpl = async (_n, req) => ({ exitCode: req.command[0] === "echo" ? 0 : 7, stdout: req.command[0] === "echo" ? `${req.command[1]}\n` : "hello\n", stderr: "" });
-    const r = await runOnce({ backend: b, cfg: testConfig(), state: undefined }, { image: "alpine", command: ["sh", "-c", "echo hello; exit 7"] });
+    const r = await runOnce({ backend: b, cfg: testConfig(), state: undefined, session: SESSION }, { image: "alpine", command: ["sh", "-c", "echo hello; exit 7"] });
     expect(r.exitCode).toBe(7);
     expect(r.stdout).toBe("hello\n");
     expect(r.machine.startsWith("mcp-once-")).toBe(true);
@@ -108,7 +112,7 @@ describe("runOnce", () => {
       if (req.command[0] === "echo") return { exitCode: 0, stdout: `${req.command[1]}\n`, stderr: "" };
       return { exitCode: 124, stdout: "", stderr: "\ncommand timed out after 2000ms" };
     };
-    const r = await runOnce({ backend: b, cfg: testConfig(), state: undefined }, { image: "alpine", command: ["sleep", "999"], timeoutSecs: 2 });
+    const r = await runOnce({ backend: b, cfg: testConfig(), state: undefined, session: SESSION }, { image: "alpine", command: ["sleep", "999"], timeoutSecs: 2 });
     expect(r.timedOut).toBe(true);
     expect(b.machines.size).toBe(0);
     expect(execs).toBe(2);
@@ -117,7 +121,7 @@ describe("runOnce", () => {
     b2.execImpl = async () => {
       throw new Error("socket hang up");
     };
-    await expect(runOnce({ backend: b2, cfg: testConfig({ readyTimeoutSecs: 0 }), state: undefined }, { image: "alpine", command: "true" })).rejects.toThrow(/did not become ready/);
+    await expect(runOnce({ backend: b2, cfg: testConfig({ readyTimeoutSecs: 0 }), state: undefined, session: SESSION }, { image: "alpine", command: "true" })).rejects.toThrow(/did not become ready/);
     expect(b2.machines.size).toBe(0);
     expect(b2.calls.at(-1)?.op).toBe("delete");
   });
@@ -126,47 +130,48 @@ describe("runOnce", () => {
     const ready = async (_n: string, req: { command: string[] }) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
     const local = new FakeBackend("local");
     local.execImpl = ready;
-    await runOnce({ backend: local, cfg: testConfig({ runOnceNetwork: "blocked" }), state: undefined }, { image: "alpine", command: "true" });
+    await runOnce({ backend: local, cfg: testConfig({ runOnceNetwork: "blocked" }), state: undefined, session: SESSION }, { image: "alpine", command: "true" });
     expect((local.calls[0]?.args as { network: unknown }).network).toEqual({ mode: "blocked" });
 
     // No config knob decides this one: an untrusted command on a billed
     // fleet gets no egress unless the caller names an allow-list.
     const cloud = new FakeBackend("cloud");
     cloud.execImpl = ready;
-    await runOnce({ backend: cloud, cfg: testConfig(), state: undefined }, { image: "alpine", command: "true" });
+    await runOnce({ backend: cloud, cfg: testConfig(), state: undefined, session: SESSION }, { image: "alpine", command: "true" });
     expect((cloud.calls[0]?.args as { network: unknown }).network).toEqual({ mode: "blocked" });
   });
 
   it("sends a ttlSeconds backstop so a killed server cannot leave a machine billing", async () => {
     const b = new FakeBackend("cloud");
     b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
-    await runOnce({ backend: b, cfg: testConfig({ ephemeralTtlSecs: 600 }), state: undefined }, { image: "alpine", command: "true" });
+    await runOnce({ backend: b, cfg: testConfig({ ephemeralTtlSecs: 600 }), state: undefined, session: SESSION }, { image: "alpine", command: "true" });
     expect((b.calls[0]?.args as { ttlSeconds: number }).ttlSeconds).toBe(600);
   });
 });
 
 describe("cleanupEphemeral", () => {
-  it("deletes prefixed machines recorded by this pid or a dead pid, never others", async () => {
+  it("deletes this session's prefixed machines and a dead process's, never a live sibling session's", async () => {
     const b = new FakeBackend();
     const open = { image: "a", cpus: 1, memoryMb: 1, network: { mode: "open" as const } };
-    await b.createMachine({ name: "mcp-mine", ...open });
-    await b.createMachine({ name: "mcp-dead", ...open });
-    await b.createMachine({ name: "mcp-other", ...open });
-    await b.createMachine({ name: "keep", ...open });
+    for (const name of ["mcp-mine", "mcp-dead", "mcp-sibling", "keep"]) await b.createMachine({ name, ...open });
     const state = new StateFile(join(mkdtempSync(join(tmpdir(), "smol-mcp-st-")), "machines.json"));
-    state.add("mcp-mine");
-    state.add("mcp-dead", 999999999);
-    state.add("keep");
+    state.add("mcp-mine", SESSION);
+    state.add("mcp-dead", "a-session-of-a-crashed-process", 999999999);
+    // Another session in this same process. Under a pid-keyed record this one
+    // was deleted here, and the session that created it was never told.
+    state.add("mcp-sibling", "another-live-session");
+    state.add("keep", SESSION);
     b.calls.length = 0;
-    const r = await cleanupEphemeral({ backend: b, cfg: testConfig(), state });
+    const r = await cleanupEphemeral({ backend: b, cfg: testConfig(), state, session: SESSION });
     expect(r.deleted.sort()).toEqual(["mcp-dead", "mcp-mine"]);
     expect(r.failed).toEqual([]);
-    expect([...b.machines.keys()].sort()).toEqual(["keep", "mcp-other"]);
+    expect([...b.machines.keys()].sort()).toEqual(["keep", "mcp-sibling"]);
+    expect(state.read().machines.map((m) => m.name).sort()).toEqual(["keep", "mcp-sibling"]);
     // A machine already gone is dropped from the state without an error.
-    state.add("mcp-gone");
-    const r2 = await cleanupEphemeral({ backend: b, cfg: testConfig(), state });
+    state.add("mcp-gone", SESSION);
+    const r2 = await cleanupEphemeral({ backend: b, cfg: testConfig(), state, session: SESSION });
     expect(r2.failed).toEqual([]);
-    expect(state.read().machines.map((m) => m.name)).toEqual(["keep"]);
+    expect(state.read().machines.map((m) => m.name).sort()).toEqual(["keep", "mcp-sibling"]);
   });
 });
 

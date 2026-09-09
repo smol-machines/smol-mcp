@@ -195,6 +195,28 @@ describe("http transport", () => {
     expect(backend.machines.size).toBe(0);
   });
 
+  it("leaves another session's ephemeral machines alone when one session closes", async () => {
+    // Executed against a fake local API before this: the session that had
+    // spawned the serve deleted the other session's machine on its own close,
+    // and the other session was never told. The machines are the visible half.
+    const { backend, url } = await start();
+    const a = await connect(url);
+    const b = await connect(url);
+    await a.client.callTool({ name: "create-machine", arguments: { target: "local", image: "alpine" } });
+    await b.client.callTool({ name: "create-machine", arguments: { target: "local", image: "alpine" } });
+    const [first, second] = backend.calls.filter((c) => c.op === "create").map((c) => c.name);
+    expect(first).not.toBe(second);
+
+    await a.transport.terminateSession();
+    await a.client.close();
+    await expect.poll(() => backend.machines.has(String(first))).toBe(false);
+    expect(backend.machines.has(String(second))).toBe(true);
+
+    await b.transport.terminateSession();
+    await b.client.close();
+    await expect.poll(() => backend.machines.size).toBe(0);
+  });
+
   it("answers 404 off the configured path and 400 for a body that is not an initialize", async () => {
     const { url } = await start();
     const wrong = await fetch(url.replace("/mcp", "/nope"), { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: "{}" });

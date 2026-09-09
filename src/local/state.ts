@@ -1,12 +1,18 @@
 // The record of ephemeral machines this server created, so a stdio EOF (or
 // the next start, after a crash) can delete them. Only names carrying the
 // prefix are ever deleted from here.
+//
+// Ownership is a session, not a process. One process hosts many sessions over
+// the HTTP transport, and keying by pid made every session in it the owner of
+// every other session's machines, so the first one to close deleted them all.
+// The pid is still recorded, because a name whose process is gone is a name
+// nobody will ever come back for.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
 const StateSchema = z.object({
-  machines: z.array(z.object({ name: z.string(), pid: z.number(), createdAt: z.number() })),
+  machines: z.array(z.object({ name: z.string(), owner: z.string().default(""), pid: z.number(), createdAt: z.number() })),
 });
 export type State = z.infer<typeof StateSchema>;
 
@@ -33,9 +39,9 @@ export class StateFile {
     renameSync(tmp, this.path);
   }
 
-  add(name: string, pid = process.pid): void {
+  add(name: string, owner: string, pid = process.pid): void {
     const s = this.read();
-    if (!s.machines.some((m) => m.name === name)) s.machines.push({ name, pid, createdAt: Date.now() });
+    if (!s.machines.some((m) => m.name === name)) s.machines.push({ name, owner, pid, createdAt: Date.now() });
     this.write(s);
   }
 
@@ -45,10 +51,12 @@ export class StateFile {
     this.write(s);
   }
 
-  // Names recorded by this pid, plus names whose recording pid is gone.
-  owned(pid = process.pid, isAlive: (pid: number) => boolean = pidAlive): string[] {
+  // Names this session recorded, plus names left behind by a process that no
+  // longer exists. A live process's other sessions are nobody else's to
+  // delete, so they are not in here.
+  owned(owner: string, isAlive: (pid: number) => boolean = pidAlive): string[] {
     return this.read()
-      .machines.filter((m) => m.pid === pid || !isAlive(m.pid))
+      .machines.filter((m) => m.owner === owner || !isAlive(m.pid))
       .map((m) => m.name);
   }
 }

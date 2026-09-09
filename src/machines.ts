@@ -56,6 +56,9 @@ export interface Machines {
   backend: MachineBackend;
   cfg: Config;
   state: StateFile | undefined;
+  // The session that owns what this record creates. One process can host
+  // many, and each cleans up only its own.
+  session: string;
 }
 
 export interface NetworkArgs {
@@ -97,7 +100,7 @@ export async function createMachine(m: Machines, args: CreateArgs) {
     ...(args.env ? { env: args.env } : {}),
     ...(ephemeral ? { ttlSeconds: m.cfg.ephemeralTtlSecs } : {}),
   });
-  if (ephemeral) m.state?.add(name);
+  if (ephemeral) m.state?.add(name, m.session);
   let started = info;
   let ready = false;
   if (args.start ?? true) {
@@ -150,7 +153,7 @@ export interface RunOnceArgs extends RunArgs, NetworkArgs {
 // happened above it, so a timeout or a thrown error still removes the machine.
 export async function runOnce(m: Machines, args: RunOnceArgs): Promise<CommandResult & { machine: string }> {
   const name = ephemeralName(m.cfg.machinePrefix, "once");
-  m.state?.add(name);
+  m.state?.add(name, m.session);
   const fallback = m.backend.target === "cloud" ? "blocked" : (m.cfg.runOnceNetwork as "open" | "blocked");
   let result: CommandResult | undefined;
   let failure: unknown;
@@ -194,7 +197,7 @@ export async function cleanupEphemeral(m: Machines): Promise<{ deleted: string[]
   const deleted: string[] = [];
   const failed: { name: string; error: string }[] = [];
   if (!m.state) return { deleted, failed };
-  for (const name of m.state.owned()) {
+  for (const name of m.state.owned(m.session)) {
     if (!name.startsWith(m.cfg.machinePrefix)) continue;
     try {
       await m.backend.deleteMachine(name);

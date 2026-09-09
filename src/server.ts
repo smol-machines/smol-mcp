@@ -1,4 +1,5 @@
 // Builds the McpServer, wires the two backends, and runs cleanup on close.
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -49,6 +50,8 @@ export interface CreateServerOptions {
   log?: (msg: string) => void;
   // Test seam: a backend in place of a real serve.
   localBackend?: MachineBackend;
+  // Identity of the session this server belongs to. Generated when absent.
+  session?: string;
 }
 
 export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> {
@@ -56,6 +59,9 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
   const mode = resolveTargets(cfg);
   const log = opts.log ?? ((msg: string) => process.stderr.write(`smol-mcp: ${msg}\n`));
   const state = StateFile.inRuntimeDir(cfg.runtimeDir);
+  // One process can host many sessions, and a session is the unit that owns
+  // an ephemeral machine and cleans it up.
+  const session = opts.session ?? randomUUID();
 
   // The serve is started on the first local call, not at connect. A client
   // that only ever names the cloud target must not need smolvm installed,
@@ -67,7 +73,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
       const handle: ServeHandle = opts.localBackend
         ? { client: opts.localBackend as never, url: "test", owned: false, version: "test", stop: async () => {} }
         : await ensureServe(cfg, log);
-      const machines: Machines = { backend: opts.localBackend ?? handle.client, cfg, state };
+      const machines: Machines = { backend: opts.localBackend ?? handle.client, cfg, state, session };
       // Machines a crashed earlier instance left behind.
       const stale = await ops.cleanupEphemeral(machines);
       if (stale.deleted.length > 0) log(`deleted ${stale.deleted.length} stale ephemeral machine(s): ${stale.deleted.join(", ")}`);
@@ -79,7 +85,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
 
   // The cloud target keeps no state file: ttlSeconds on the create is the
   // control plane's own backstop, and it survives this process being killed.
-  const cloud: Machines = { backend: new CloudClient(cfg.cloudUrl, cfg.cloudToken), cfg, state: undefined };
+  const cloud: Machines = { backend: new CloudClient(cfg.cloudUrl, cfg.cloudToken), cfg, state: undefined, session };
 
   // Set once, when a client with elicitation answers which fleet this session
   // is for. From then on the argument is gone from every schema and this is

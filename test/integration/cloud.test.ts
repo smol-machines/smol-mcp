@@ -8,6 +8,8 @@ import * as ops from "../../src/machines.js";
 import type { Machines } from "../../src/machines.js";
 import { CLOUD_IT, IT_PREFIX, itConfig, unique } from "./harness.js";
 
+const SESSION = "cloud-integration";
+
 // USD 1.00 of period spend. Reaching it stops the suite rather than slowing
 // it down: an overspend caused by a test is the kind of thing nobody notices
 // until the bill arrives.
@@ -45,7 +47,7 @@ beforeAll(async () => {
   baselineMicros = account.periodCost.totalMicros;
   console.log(`cloud baseline: periodCost.totalMicros=${baselineMicros}, machineCount=${account.periodUsage.machineCount}`);
   expect(baselineMicros, "period spend is already over the ceiling; not creating anything").toBeLessThan(CEILING_MICROS);
-  m = { backend: client, cfg, state: undefined };
+  m = { backend: client, cfg, state: undefined, session: SESSION };
 });
 
 afterAll(async () => {
