@@ -2,7 +2,7 @@
 // can assert ordering (upload after readiness, delete after timeout).
 import type { ImageInfo } from "../../src/api.js";
 import { BackendError } from "../../src/backend.js";
-import type { CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView } from "../../src/backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView } from "../../src/backend.js";
 import { ConfigSchema } from "../../src/config.js";
 import type { Config } from "../../src/config.js";
 
@@ -58,8 +58,10 @@ export class FakeBackend implements MachineBackend {
     this.machines.delete(name);
     return { deleted: name };
   }
-  async exec(name: string, req: ExecOptions) {
+  async exec(name: string, req: ExecOptions, _clientTimeoutMs?: number, ctx: CallCtx = {}) {
     this.calls.push({ op: "exec", name, args: req });
+    // A backend that ignores the signal is a backend a cancel cannot reach.
+    ctx.signal?.throwIfAborted();
     return this.execImpl(name, req);
   }
   async readFile(name: string, path: string) {

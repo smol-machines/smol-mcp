@@ -1,6 +1,6 @@
 // Orchestration above a backend: readiness, ephemeral naming, run-once.
 import { randomBytes } from "node:crypto";
-import type { MachineBackend, MachineView, NetworkPolicy } from "./backend.js";
+import type { CallCtx, MachineBackend, MachineView, NetworkPolicy } from "./backend.js";
 import { BackendError } from "./backend.js";
 import type { Config } from "./config.js";
 import { shapeResult, toArgv } from "./output.js";
@@ -39,6 +39,7 @@ export async function waitReady(
   timeoutSecs: number,
   now: () => number = Date.now,
   pause: (ms: number) => Promise<unknown> = sleep,
+  ctx: CallCtx = {},
 ): Promise<{ attempts: number }> {
   const nonce = `READY-${randomBytes(4).toString("hex")}`;
   const deadline = now() + timeoutSecs * 1000;
@@ -47,7 +48,8 @@ export async function waitReady(
   for (;;) {
     attempts += 1;
     try {
-      const r = await backend.exec(name, { command: ["echo", nonce], timeoutSecs: 10 }, 30_000);
+      ctx.signal?.throwIfAborted();
+      const r = await backend.exec(name, { command: ["echo", nonce], timeoutSecs: 10 }, 30_000, ctx);
       if (r.stdout.includes(nonce)) return { attempts };
       last = `exit ${r.exitCode}, stdout ${JSON.stringify(r.stdout)}, stderr ${JSON.stringify(r.stderr)}`;
     } catch (err) {
@@ -96,7 +98,7 @@ export interface CreateArgs extends NetworkArgs {
   start?: boolean | undefined;
 }
 
-export async function createMachine(m: Machines, args: CreateArgs) {
+export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx = {}) {
   const name = args.name ?? ephemeralName(m.cfg.machinePrefix);
   const ephemeral = name.startsWith(m.cfg.machinePrefix);
   const info = await m.backend.createMachine({
@@ -108,20 +110,20 @@ export async function createMachine(m: Machines, args: CreateArgs) {
     cmd: args.cmd ?? KEEPALIVE_CMD,
     ...(args.env ? { env: args.env } : {}),
     ...(ephemeral ? { ttlSeconds: m.cfg.ephemeralTtlSecs } : {}),
-  });
+  }, ctx);
   if (ephemeral) m.state?.add(name, m.session, info.id);
   let started = info;
   let ready = false;
   if (args.start ?? true) {
-    started = await m.backend.startMachine(name);
-    await waitReady(m.backend, name, m.cfg.readyTimeoutSecs);
+    started = await m.backend.startMachine(name, ctx);
+    await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
     ready = true;
   }
   return { machine: started, ephemeral, ready };
 }
 
-export async function deleteMachine(m: Machines, name: string): Promise<string> {
-  const r = await m.backend.deleteMachine(name);
+export async function deleteMachine(m: Machines, name: string, ctx: CallCtx = {}): Promise<string> {
+  const r = await m.backend.deleteMachine(name, ctx);
   m.state?.remove(name);
   return r.deleted;
 }
@@ -134,8 +136,14 @@ export interface RunArgs {
   stdin?: string | undefined;
 }
 
-export async function runCommand(m: Machines, name: string, args: RunArgs): Promise<CommandResult> {
+export async function runCommand(m: Machines, name: string, args: RunArgs, ctx: CallCtx = {}): Promise<CommandResult> {
   const timeoutSecs = args.timeoutSecs ?? m.cfg.execTimeoutSecs;
+  // A tool call holds a machine, and on the cloud target a bill, for as long
+  // as it runs. Without a ceiling the caller sets that duration and nothing
+  // else does.
+  if (timeoutSecs > m.cfg.maxExecTimeoutSecs) {
+    throw new BackendError(`timeoutSecs ${timeoutSecs} is above this server's ceiling of ${m.cfg.maxExecTimeoutSecs} s`, "TIMEOUT_TOO_LONG");
+  }
   const r = await m.backend.exec(
     name,
     {
@@ -147,6 +155,7 @@ export async function runCommand(m: Machines, name: string, args: RunArgs): Prom
     },
     // Client-side backstop past the server-side timeout.
     (timeoutSecs + 30) * 1000,
+    ctx,
   );
   return shapeResult(r, m.cfg.maxOutputBytes);
 }
@@ -160,7 +169,7 @@ export interface RunOnceArgs extends RunArgs, NetworkArgs {
 // The plain path only: create, start, exec, delete. Never the OCI cache or
 // init paths (smol-machines/smolvm#1192 and #1193). Delete runs whatever
 // happened above it, so a timeout or a thrown error still removes the machine.
-export async function runOnce(m: Machines, args: RunOnceArgs): Promise<CommandResult & { machine: string }> {
+export async function runOnce(m: Machines, args: RunOnceArgs, ctx: CallCtx = {}): Promise<CommandResult & { machine: string }> {
   const name = ephemeralName(m.cfg.machinePrefix, "once");
   m.state?.add(name, m.session);
   const fallback = m.backend.target === "cloud" ? "blocked" : (m.cfg.runOnceNetwork as "open" | "blocked");
@@ -175,10 +184,10 @@ export async function runOnce(m: Machines, args: RunOnceArgs): Promise<CommandRe
       network: networkPolicy(args, fallback),
       cmd: KEEPALIVE_CMD,
       ttlSeconds: m.cfg.ephemeralTtlSecs,
-    });
-    await m.backend.startMachine(name);
-    await waitReady(m.backend, name, m.cfg.readyTimeoutSecs);
-    result = await runCommand(m, name, args);
+    }, ctx);
+    await m.backend.startMachine(name, ctx);
+    await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
+    result = await runCommand(m, name, args, ctx);
   } catch (err) {
     failure = err;
   }
@@ -194,10 +203,10 @@ export async function runOnce(m: Machines, args: RunOnceArgs): Promise<CommandRe
   return { ...(result as CommandResult), machine: name };
 }
 
-export async function writeFile(m: Machines, name: string, path: string, content: Buffer) {
+export async function writeFile(m: Machines, name: string, path: string, content: Buffer, ctx: CallCtx = {}) {
   // Readiness first: see waitReady.
-  await waitReady(m.backend, name, m.cfg.readyTimeoutSecs);
-  return m.backend.writeFile(name, path, content);
+  await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
+  return m.backend.writeFile(name, path, content, ctx);
 }
 
 // Delete every ephemeral machine recorded for this process (and for dead

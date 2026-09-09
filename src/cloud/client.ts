@@ -12,7 +12,7 @@
 import { z } from "zod";
 import type { ImageInfo } from "../api.js";
 import { BackendError } from "../backend.js";
-import type { CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
 
 export const CloudNetworkSchema = z.looseObject({ mode: z.string(), cidrs: z.array(z.string()).nullish() });
 
@@ -115,7 +115,7 @@ export class CloudClient implements MachineBackend {
     return this.token !== "";
   }
 
-  private async raw(method: string, path: string, opts: { json?: unknown; body?: Buffer; timeoutMs?: number } = {}): Promise<{ status: number; text: string; buf: Buffer }> {
+  private async raw(method: string, path: string, opts: { json?: unknown; body?: Buffer; timeoutMs?: number; signal?: AbortSignal | undefined } = {}): Promise<{ status: number; text: string; buf: Buffer }> {
     if (!this.configured) throw new CloudNotConfigured();
     const headers: Record<string, string> = { authorization: `Bearer ${this.token}` };
     let body: string | Uint8Array | undefined;
@@ -130,13 +130,15 @@ export class CloudClient implements MachineBackend {
       method,
       headers,
       ...(body !== undefined ? { body } : {}),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs),
+      // The client's cancel and this call's own deadline, whichever comes
+      // first. Without the first, a cancelled request runs to the second.
+      signal: opts.signal === undefined ? AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs) : AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs)]),
     });
     const buf = Buffer.from(await res.arrayBuffer());
     return { status: res.status, text: buf.toString("utf8"), buf };
   }
 
-  private async call<T>(method: string, path: string, schema: z.ZodType<T>, opts: { json?: unknown; timeoutMs?: number } = {}): Promise<T> {
+  private async call<T>(method: string, path: string, schema: z.ZodType<T>, opts: { json?: unknown; timeoutMs?: number; signal?: AbortSignal | undefined } = {}): Promise<T> {
     const res = await this.raw(method, path, opts);
     if (res.status < 200 || res.status >= 300) throw cloudError(method, path, res.status, res.text);
     let json: unknown;
@@ -150,31 +152,31 @@ export class CloudClient implements MachineBackend {
     return parsed.data;
   }
 
-  async account(): Promise<Account> {
-    return this.call("GET", "/v1/account", AccountSchema, { timeoutMs: 30_000 });
+  async account(ctx: CallCtx = {}): Promise<Account> {
+    return this.call("GET", "/v1/account", AccountSchema, { timeoutMs: 30_000, signal: ctx.signal });
   }
 
-  async listMachines(): Promise<MachineView[]> {
-    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000 });
+  async listMachines(ctx: CallCtx = {}): Promise<MachineView[]> {
+    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000, signal: ctx.signal });
     return list.map(cloudView);
   }
 
   // Every other route takes the id. A caller who has only a name pays one
   // extra list call, which is what the CLI does too.
-  async resolve(nameOrId: string): Promise<string> {
+  async resolve(nameOrId: string, ctx: CallCtx = {}): Promise<string> {
     if (nameOrId.startsWith("mach-")) return nameOrId;
-    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000 });
+    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000, signal: ctx.signal });
     const hit = list.find((m) => m.name === nameOrId);
     if (!hit) throw new BackendError(`machine '${nameOrId}' not found on the cloud target`, "NOT_FOUND");
     return hit.id;
   }
 
-  async getMachine(nameOrId: string): Promise<MachineView> {
-    const id = await this.resolve(nameOrId);
-    return cloudView(await this.call("GET", `/v1/machines/${encodeURIComponent(id)}`, CloudMachineSchema, { timeoutMs: 30_000 }));
+  async getMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {
+    const id = await this.resolve(nameOrId, ctx);
+    return cloudView(await this.call("GET", `/v1/machines/${encodeURIComponent(id)}`, CloudMachineSchema, { timeoutMs: 30_000, signal: ctx.signal }));
   }
 
-  async createMachine(opts: CreateOptions): Promise<MachineView> {
+  async createMachine(opts: CreateOptions, ctx: CallCtx = {}): Promise<MachineView> {
     // No cmd: the cloud create request has no workload field, and a machine
     // here does not need one kept alive because exec auto-starts it.
     const body = {
@@ -185,34 +187,34 @@ export class CloudClient implements MachineBackend {
       ...(opts.env ? { env: opts.env } : {}),
       ...(opts.ttlSeconds !== undefined ? { ttlSeconds: opts.ttlSeconds } : {}),
     };
-    return cloudView(await this.call("POST", "/v1/machines", CloudMachineSchema, { json: body, timeoutMs: 180_000 }));
+    return cloudView(await this.call("POST", "/v1/machines", CloudMachineSchema, { json: body, timeoutMs: 180_000, signal: ctx.signal }));
   }
 
-  async startMachine(nameOrId: string): Promise<MachineView> {
-    const id = await this.resolve(nameOrId);
-    const res = await this.raw("POST", `/v1/machines/${encodeURIComponent(id)}/start`, { json: {}, timeoutMs: 180_000 });
+  async startMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {
+    const id = await this.resolve(nameOrId, ctx);
+    const res = await this.raw("POST", `/v1/machines/${encodeURIComponent(id)}/start`, { json: {}, timeoutMs: 180_000, signal: ctx.signal });
     if (res.status < 200 || res.status >= 300) throw cloudError("POST", `/v1/machines/${id}/start`, res.status, res.text);
     // 202 with no body is the detached form; read the machine back so the
     // caller always gets a view rather than an empty object.
-    if (res.text.trim() === "") return this.getMachine(id);
+    if (res.text.trim() === "") return this.getMachine(id, ctx);
     const parsed = CloudMachineSchema.safeParse(JSON.parse(res.text));
-    return parsed.success ? cloudView(parsed.data) : this.getMachine(id);
+    return parsed.success ? cloudView(parsed.data) : this.getMachine(id, ctx);
   }
 
-  async stopMachine(nameOrId: string): Promise<MachineView> {
-    const id = await this.resolve(nameOrId);
-    const res = await this.raw("POST", `/v1/machines/${encodeURIComponent(id)}/stop`, { json: {}, timeoutMs: 180_000 });
+  async stopMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {
+    const id = await this.resolve(nameOrId, ctx);
+    const res = await this.raw("POST", `/v1/machines/${encodeURIComponent(id)}/stop`, { json: {}, timeoutMs: 180_000, signal: ctx.signal });
     if (res.status < 200 || res.status >= 300) throw cloudError("POST", `/v1/machines/${id}/stop`, res.status, res.text);
-    return this.getMachine(id);
+    return this.getMachine(id, ctx);
   }
 
   // includeUsage turns the 204 into a 200 carrying the settled bill. A
   // mid-life /usage read is a lower bound, so this is the only number worth
   // recording.
-  async deleteMachine(nameOrId: string): Promise<{ deleted: string; usageMicros?: number }> {
-    const id = await this.resolve(nameOrId);
+  async deleteMachine(nameOrId: string, ctx: CallCtx = {}): Promise<{ deleted: string; usageMicros?: number }> {
+    const id = await this.resolve(nameOrId, ctx);
     const path = `/v1/machines/${encodeURIComponent(id)}?includeUsage=true`;
-    const res = await this.raw("DELETE", path, { timeoutMs: 120_000 });
+    const res = await this.raw("DELETE", path, { timeoutMs: 120_000, signal: ctx.signal });
     if (res.status < 200 || res.status >= 300) throw cloudError("DELETE", path, res.status, res.text);
     const micros = findMicros(res.text);
     return { deleted: nameOrId, ...(micros !== undefined ? { usageMicros: micros } : {}) };
@@ -221,8 +223,8 @@ export class CloudClient implements MachineBackend {
   // HTTP 200 is returned for a guest command that failed, timed out, or had no
   // interpreter. exitCode in the body is the only thing that distinguishes
   // them, so nothing here reads the status as a verdict on the command.
-  async exec(nameOrId: string, req: ExecOptions, clientTimeoutMs?: number): Promise<ExecResult> {
-    const id = await this.resolve(nameOrId);
+  async exec(nameOrId: string, req: ExecOptions, clientTimeoutMs?: number, ctx: CallCtx = {}): Promise<ExecResult> {
+    const id = await this.resolve(nameOrId, ctx);
     const body = {
       command: req.command,
       ...(req.workdir !== undefined ? { cwd: req.workdir } : {}),
@@ -234,6 +236,7 @@ export class CloudClient implements MachineBackend {
     const r = await this.call("POST", `/v1/machines/${encodeURIComponent(id)}/exec?output=text`, CloudExecSchema, {
       json: body,
       timeoutMs: clientTimeoutMs ?? ((req.timeoutSecs ?? 120) + 30) * 1000,
+      signal: ctx.signal,
     });
     return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
   }
@@ -242,19 +245,24 @@ export class CloudClient implements MachineBackend {
   // `?path=` guess answers 404 with an empty body, so there is nothing to code
   // against. Transfer goes through exec instead: base64 keeps it binary-safe
   // and it is the same auto-starting path every other cloud call uses.
-  async readFile(nameOrId: string, path: string): Promise<Buffer> {
-    const r = await this.exec(nameOrId, { command: ["sh", "-c", `base64 < ${shellQuote(path)}`], timeoutSecs: 120 });
+  async readFile(nameOrId: string, path: string, ctx: CallCtx = {}): Promise<Buffer> {
+    const r = await this.exec(nameOrId, { command: ["sh", "-c", `base64 < ${shellQuote(path)}`], timeoutSecs: 120 }, undefined, ctx);
     if (r.exitCode !== 0) throw new BackendError(`read ${path}: exit ${r.exitCode}: ${r.stderr.trim().slice(0, 200)}`, "READ_FAILED");
     return Buffer.from(r.stdout.replace(/\s+/g, ""), "base64");
   }
 
-  async writeFile(nameOrId: string, path: string, content: Buffer): Promise<{ path: string; size: number }> {
+  async writeFile(nameOrId: string, path: string, content: Buffer, ctx: CallCtx = {}): Promise<{ path: string; size: number }> {
     const b64 = content.toString("base64");
-    const r = await this.exec(nameOrId, {
-      command: ["sh", "-c", `mkdir -p "$(dirname ${shellQuote(path)})" && base64 -d > ${shellQuote(path)}`],
-      stdin: b64,
-      timeoutSecs: 120,
-    });
+    const r = await this.exec(
+      nameOrId,
+      {
+        command: ["sh", "-c", `mkdir -p "$(dirname ${shellQuote(path)})" && base64 -d > ${shellQuote(path)}`],
+        stdin: b64,
+        timeoutSecs: 120,
+      },
+      undefined,
+      ctx,
+    );
     if (r.exitCode !== 0) throw new BackendError(`write ${path}: exit ${r.exitCode}: ${r.stderr.trim().slice(0, 200)}`, "WRITE_FAILED");
     return { path, size: content.length };
   }

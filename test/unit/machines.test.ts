@@ -8,7 +8,7 @@ import { FakeBackend, testConfig } from "./fake-backend.js";
 // name their own.
 const SESSION = "session-under-test";
 import { StateFile } from "../../src/local/state.js";
-import { cleanupEphemeral, createMachine, networkPolicy, runOnce, waitReady, writeFile, KEEPALIVE_CMD } from "../../src/machines.js";
+import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, networkPolicy, runCommand, runOnce, waitReady, writeFile } from "../../src/machines.js";
 
 describe("waitReady", () => {
   it("returns once an exec echoes the nonce, and counts the attempts", async () => {
@@ -187,5 +187,33 @@ describe("networkPolicy", () => {
     expect(networkPolicy({}, "blocked")).toEqual({ mode: "blocked" });
     expect(networkPolicy({ network: "open" }, "blocked")).toEqual({ mode: "open" });
     expect(networkPolicy({ allowHosts: [] }, "blocked")).toEqual({ mode: "blocked" });
+  });
+});
+
+describe("cancellation and the timeout ceiling", () => {
+  it("stops polling for readiness the moment the caller cancels", async () => {
+    // A client's notifications/cancelled used to release nothing: the guest
+    // command ran to its own timeout and the poll kept going.
+    const b = new FakeBackend();
+    b.execImpl = async () => ({ exitCode: 1, stdout: "", stderr: "" });
+    const control = new AbortController();
+    const m = { backend: b, cfg: testConfig({ readyTimeoutSecs: 60 }), state: undefined, session: SESSION };
+    const started = createMachine(m, { image: "alpine" }, { signal: control.signal });
+    await new Promise((r) => setTimeout(r, 50));
+    control.abort();
+    await expect(started).rejects.toThrow();
+    const attempts = b.calls.filter((c) => c.op === "exec").length;
+    await new Promise((r) => setTimeout(r, 1200));
+    // And it really stopped: no further attempt after the abort.
+    expect(b.calls.filter((c) => c.op === "exec").length).toBe(attempts);
+  });
+
+  it("refuses a timeout above the ceiling rather than holding a machine for it", async () => {
+    const b = new FakeBackend();
+    const m = { backend: b, cfg: testConfig({ maxExecTimeoutSecs: 300 }), state: undefined, session: SESSION };
+    await expect(runCommand(m, "m", { command: ["true"], timeoutSecs: 3600 })).rejects.toMatchObject({ code: "TIMEOUT_TOO_LONG" });
+    // Refused before the call, so no machine was held at all.
+    expect(b.calls).toEqual([]);
+    await expect(runCommand(m, "m", { command: ["true"], timeoutSecs: 300 })).resolves.toBeDefined();
   });
 });

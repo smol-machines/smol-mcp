@@ -27,6 +27,10 @@ export const ConfigSchema = z.object({
   // short enough that a killed server cannot leave a machine billing forever.
   ephemeralTtlSecs: z.number().int().positive().default(3600),
   execTimeoutSecs: z.number().int().positive().default(120),
+  // Ceiling on the timeoutSecs a caller may ask for. A tool call holds a
+  // machine open, and on the cloud target a bill, for as long as it runs, so
+  // the longest one is a decision this server makes rather than the caller.
+  maxExecTimeoutSecs: z.number().int().positive().default(900),
   maxOutputBytes: z.number().int().positive().default(64 * 1024),
   readyTimeoutSecs: z.number().int().positive().default(120),
   serveStartTimeoutSecs: z.number().int().positive().default(60),
@@ -75,6 +79,7 @@ const ENV_KEYS: Record<keyof Config, string> = {
   runOnceNetwork: "SMOL_MCP_RUN_ONCE_NETWORK",
   ephemeralTtlSecs: "SMOL_MCP_EPHEMERAL_TTL_SECS",
   execTimeoutSecs: "SMOL_MCP_EXEC_TIMEOUT_SECS",
+  maxExecTimeoutSecs: "SMOL_MCP_MAX_EXEC_TIMEOUT_SECS",
   maxOutputBytes: "SMOL_MCP_MAX_OUTPUT_BYTES",
   readyTimeoutSecs: "SMOL_MCP_READY_TIMEOUT_SECS",
   serveStartTimeoutSecs: "SMOL_MCP_SERVE_START_TIMEOUT_SECS",

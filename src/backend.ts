@@ -63,21 +63,29 @@ export interface ExecResult {
   stderr: string;
 }
 
+// What the caller can still say once a call is under way. The protocol has
+// exactly one thing to say, and it is "stop": a client that cancels a request
+// releases nothing unless the abort reaches the socket, so every backend
+// method takes this and every backend call passes it on.
+export interface CallCtx {
+  signal?: AbortSignal | undefined;
+}
+
 export interface MachineBackend {
   readonly target: "local" | "cloud";
-  listMachines(): Promise<MachineView[]>;
-  getMachine(name: string): Promise<MachineView>;
-  createMachine(opts: CreateOptions): Promise<MachineView>;
-  startMachine(name: string): Promise<MachineView>;
-  stopMachine(name: string): Promise<MachineView>;
+  listMachines(ctx?: CallCtx): Promise<MachineView[]>;
+  getMachine(name: string, ctx?: CallCtx): Promise<MachineView>;
+  createMachine(opts: CreateOptions, ctx?: CallCtx): Promise<MachineView>;
+  startMachine(name: string, ctx?: CallCtx): Promise<MachineView>;
+  stopMachine(name: string, ctx?: CallCtx): Promise<MachineView>;
   // Returns the name that was deleted, plus the settled bill where the API
   // reports one (cloud does, on DELETE ...?includeUsage=true; local does not).
-  deleteMachine(name: string): Promise<{ deleted: string; usageMicros?: number }>;
-  exec(name: string, req: ExecOptions, clientTimeoutMs?: number): Promise<ExecResult>;
-  readFile(name: string, path: string): Promise<Buffer>;
-  writeFile(name: string, path: string, content: Buffer): Promise<{ path: string; size: number }>;
-  logs(name: string, tail: number): Promise<string[]>;
-  pullImage(name: string, image: string): Promise<ImageInfo>;
+  deleteMachine(name: string, ctx?: CallCtx): Promise<{ deleted: string; usageMicros?: number }>;
+  exec(name: string, req: ExecOptions, clientTimeoutMs?: number, ctx?: CallCtx): Promise<ExecResult>;
+  readFile(name: string, path: string, ctx?: CallCtx): Promise<Buffer>;
+  writeFile(name: string, path: string, content: Buffer, ctx?: CallCtx): Promise<{ path: string; size: number }>;
+  logs(name: string, tail: number, ctx?: CallCtx): Promise<string[]>;
+  pullImage(name: string, image: string, ctx?: CallCtx): Promise<ImageInfo>;
 }
 
 export class BackendError extends Error {

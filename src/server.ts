@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { MachineBackend, MachineView } from "./backend.js";
+import type { CallCtx, MachineBackend, MachineView } from "./backend.js";
 import { BackendError } from "./backend.js";
 import { CloudClient } from "./cloud/client.js";
 import type { Config, TargetMode } from "./config.js";
@@ -41,6 +41,13 @@ function fail(err: unknown): CallToolResult {
   const message = err instanceof Error ? err.message : String(err);
   const code = err instanceof BackendError ? err.code : "ERROR";
   return { content: [{ type: "text", text: `${code}: ${message}` }], isError: true };
+}
+
+// The SDK hands every handler an abort signal that fires on the client's
+// notifications/cancelled. Reading it is what makes a cancel release the
+// machine and, on the cloud target, stop the bill.
+function ctxOf(extra: { signal?: AbortSignal }): CallCtx {
+  return { signal: extra.signal };
 }
 
 function machineView(m: MachineView) {
@@ -133,93 +140,93 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     },
   );
 
-  registered["list-machines"] = server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a) => {
+  registered["list-machines"] = server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a, extra) => {
     try {
-      const list = await (await pick(a.target)).backend.listMachines();
+      const list = await (await pick(a.target)).backend.listMachines(ctxOf(extra));
       return ok({ machines: list.map(machineView) });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["get-machine"] = server.registerTool("get-machine", { description: toolDescriptions["get-machine"], inputSchema: inputs["get-machine"], outputSchema: machineOutput }, async (a) => {
+  registered["get-machine"] = server.registerTool("get-machine", { description: toolDescriptions["get-machine"], inputSchema: inputs["get-machine"], outputSchema: machineOutput }, async (a, extra) => {
     try {
-      return ok(machineView(await (await pick(a.target)).backend.getMachine(a.name)));
+      return ok(machineView(await (await pick(a.target)).backend.getMachine(a.name, ctxOf(extra))));
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["create-machine"] = server.registerTool("create-machine", { description: toolDescriptions["create-machine"], inputSchema: inputs["create-machine"], outputSchema: { machine: z.object(machineOutput), ephemeral: z.boolean(), ready: z.boolean() } }, async (a) => {
+  registered["create-machine"] = server.registerTool("create-machine", { description: toolDescriptions["create-machine"], inputSchema: inputs["create-machine"], outputSchema: { machine: z.object(machineOutput), ephemeral: z.boolean(), ready: z.boolean() } }, async (a, extra) => {
     try {
-      const r = await ops.createMachine((await pick(a.target)), a);
+      const r = await ops.createMachine(await pick(a.target), a, ctxOf(extra));
       return ok({ machine: machineView(r.machine), ephemeral: r.ephemeral, ready: r.ready });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["run-command"] = server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: inputs["run-command"], outputSchema: commandResultOutput }, async (a) => {
+  registered["run-command"] = server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: inputs["run-command"], outputSchema: commandResultOutput }, async (a, extra) => {
     try {
-      return ok({ ...(await ops.runCommand((await pick(a.target)), a.name, a)) });
+      return ok({ ...(await ops.runCommand(await pick(a.target), a.name, a, ctxOf(extra))) });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["run-once"] = server.registerTool("run-once", { description: toolDescriptions["run-once"], inputSchema: inputs["run-once"], outputSchema: { ...commandResultOutput, machine: z.string() } }, async (a) => {
+  registered["run-once"] = server.registerTool("run-once", { description: toolDescriptions["run-once"], inputSchema: inputs["run-once"], outputSchema: { ...commandResultOutput, machine: z.string() } }, async (a, extra) => {
     try {
-      return ok({ ...(await ops.runOnce((await pick(a.target)), a)) });
+      return ok({ ...(await ops.runOnce(await pick(a.target), a, ctxOf(extra))) });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number() } }, async (a) => {
+  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number() } }, async (a, extra) => {
     try {
-      const buf = await (await pick(a.target)).backend.readFile(a.name, a.path);
+      const buf = await (await pick(a.target)).backend.readFile(a.name, a.path, ctxOf(extra));
       return ok({ path: a.path, content: buf.toString(a.encoding), encoding: a.encoding, size: buf.length });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["write-file"] = server.registerTool("write-file", { description: toolDescriptions["write-file"], inputSchema: inputs["write-file"], outputSchema: { path: z.string(), size: z.number() } }, async (a) => {
+  registered["write-file"] = server.registerTool("write-file", { description: toolDescriptions["write-file"], inputSchema: inputs["write-file"], outputSchema: { path: z.string(), size: z.number() } }, async (a, extra) => {
     try {
-      const r = await ops.writeFile((await pick(a.target)), a.name, a.path, Buffer.from(a.content, a.encoding));
+      const r = await ops.writeFile(await pick(a.target), a.name, a.path, Buffer.from(a.content, a.encoding), ctxOf(extra));
       return ok({ path: r.path, size: r.size });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["stop-machine"] = server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], inputSchema: inputs["stop-machine"], outputSchema: machineOutput }, async (a) => {
+  registered["stop-machine"] = server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], inputSchema: inputs["stop-machine"], outputSchema: machineOutput }, async (a, extra) => {
     try {
-      return ok(machineView(await (await pick(a.target)).backend.stopMachine(a.name)));
+      return ok(machineView(await (await pick(a.target)).backend.stopMachine(a.name, ctxOf(extra))));
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["delete-machine"] = server.registerTool("delete-machine", { description: toolDescriptions["delete-machine"], inputSchema: inputs["delete-machine"], outputSchema: { deleted: z.string() } }, async (a) => {
+  registered["delete-machine"] = server.registerTool("delete-machine", { description: toolDescriptions["delete-machine"], inputSchema: inputs["delete-machine"], outputSchema: { deleted: z.string() } }, async (a, extra) => {
     try {
-      return ok({ deleted: await ops.deleteMachine((await pick(a.target)), a.name) });
+      return ok({ deleted: await ops.deleteMachine(await pick(a.target), a.name, ctxOf(extra)) });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["machine-logs"] = server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], inputSchema: inputs["machine-logs"], outputSchema: { lines: z.array(z.string()) } }, async (a) => {
+  registered["machine-logs"] = server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], inputSchema: inputs["machine-logs"], outputSchema: { lines: z.array(z.string()) } }, async (a, extra) => {
     try {
-      return ok({ lines: await (await pick(a.target)).backend.logs(a.name, a.tail ?? cfg.logsTail) });
+      return ok({ lines: await (await pick(a.target)).backend.logs(a.name, a.tail ?? cfg.logsTail, ctxOf(extra)) });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["pull-image"] = server.registerTool("pull-image", { description: toolDescriptions["pull-image"], inputSchema: inputs["pull-image"], outputSchema: { reference: z.string(), digest: z.string(), size: z.number(), architecture: z.string(), os: z.string(), layerCount: z.number() } }, async (a) => {
+  registered["pull-image"] = server.registerTool("pull-image", { description: toolDescriptions["pull-image"], inputSchema: inputs["pull-image"], outputSchema: { reference: z.string(), digest: z.string(), size: z.number(), architecture: z.string(), os: z.string(), layerCount: z.number() } }, async (a, extra) => {
     try {
-      const img = await (await pick(a.target)).backend.pullImage(a.name, a.image);
+      const img = await (await pick(a.target)).backend.pullImage(a.name, a.image, ctxOf(extra));
       return ok({ reference: img.reference, digest: img.digest, size: img.size, architecture: img.architecture, os: img.os, layerCount: img.layerCount });
     } catch (err) {
       return fail(err);
