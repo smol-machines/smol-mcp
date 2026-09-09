@@ -8,7 +8,7 @@ import { FakeBackend, testConfig } from "./fake-backend.js";
 // name their own.
 const SESSION = "session-under-test";
 import { StateFile } from "../../src/local/state.js";
-import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, logs, networkPolicy, readFile, runCommand, runCommandOnMachine, runOnce, startMachine, waitReady, writeFile } from "../../src/machines.js";
+import { KEEPALIVE_CMD, branchMachine, cleanupEphemeral, createMachine, logs, networkPolicy, readFile, runCommand, runCommandOnMachine, runOnce, startMachine, waitReady, writeFile } from "../../src/machines.js";
 
 describe("waitReady", () => {
   it("returns once an exec echoes the nonce, and counts the attempts", async () => {
@@ -399,5 +399,39 @@ describe("a page of a machine's log", () => {
     // Nothing new since: an empty page and the same cursor, which is what a
     // follower needs to tell "quiet" from "start again".
     expect((await logs(m, "m", { cursor: page.cursor })).lines).toEqual([]);
+  });
+});
+
+describe("branchMachine", () => {
+  it("branches a source into a child and waits until commands run in the child", async () => {
+    const b = new FakeBackend();
+    b.branchable.add("golden");
+    b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    const r = await branchMachine(m, "golden", "child-1", true);
+    expect(r.machine.name).toBe("child-1");
+    expect(r.ready).toBe(true);
+    // Readiness is checked on the child, not on the source: the source was
+    // already running and the child is the thing the caller will use.
+    expect(b.calls.map((c) => `${c.op}:${String(c.name)}`)).toEqual(["branch:golden", "exec:child-1"]);
+  });
+
+  it("carries the target's own refusal when the source was not made branchable", async () => {
+    const b = new FakeBackend();
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    await expect(branchMachine(m, "ordinary", "child-1", true)).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("is not branchable"),
+    });
+  });
+
+  it("asks the local target for a branch source at start time", async () => {
+    const b = new FakeBackend();
+    b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    await createMachine(m, { name: "golden", image: "alpine", branchable: true });
+    expect(b.calls.find((c) => c.op === "start")?.args).toEqual({ branchable: true, ctx: {} });
+    // And the create carries it too, for the target that takes it there.
+    expect((b.calls[0]?.args as Record<string, unknown>).branchable).toBe(true);
   });
 });

@@ -112,7 +112,7 @@ describe("http transport", () => {
     const { client, transport } = await connect(url);
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain("list-machines");
-    expect(names).toHaveLength(12);
+    expect(names).toHaveLength(13);
     const res = await client.callTool({ name: "list-machines", arguments: { target: "local" } });
     expect(res.structuredContent).toEqual({ machines: [expect.objectContaining({ name: "mcp-a" })] });
     await transport.close();

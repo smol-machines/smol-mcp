@@ -2,7 +2,7 @@
 // can assert ordering (upload after readiness, delete after timeout).
 import type { ImageInfo } from "../../src/api.js";
 import { BackendError } from "../../src/backend.js";
-import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView } from "../../src/backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView, StartOptions } from "../../src/backend.js";
 import { ConfigSchema } from "../../src/config.js";
 import type { Config } from "../../src/config.js";
 
@@ -38,12 +38,23 @@ export class FakeBackend implements MachineBackend {
     this.machines.set(opts.name, m);
     return m;
   }
-  async startMachine(name: string) {
-    this.calls.push({ op: "start", name });
+  async startMachine(name: string, opts: StartOptions = {}) {
+    this.calls.push({ op: "start", name, args: opts });
     const m = this.info(name, "running");
     this.machines.set(name, m);
     return m;
   }
+  // A branch source has to have been made one; the fake refuses like both
+  // real targets do.
+  branchable = new Set<string>();
+  async branchMachine(name: string, childName: string) {
+    this.calls.push({ op: "branch", name, args: childName });
+    if (!this.branchable.has(name)) throw new BackendError(`machine '${name}' is not branchable`, "CONFLICT");
+    const m = this.info(childName, "running");
+    this.machines.set(childName, m);
+    return m;
+  }
+
   async stopMachine(name: string) {
     this.calls.push({ op: "stop", name });
     const m = this.info(name, "stopped");

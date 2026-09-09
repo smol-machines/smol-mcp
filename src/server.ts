@@ -317,6 +317,15 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
+  registered["branch-machine"] = server.registerTool("branch-machine", { description: toolDescriptions["branch-machine"], inputSchema: inputs["branch-machine"], outputSchema: { machine: z.object(machineOutput), ready: z.boolean() } }, async (a, extra) => {
+    try {
+      const r = await ops.branchMachine(await pick(a.target), a.name, a.childName, a.wait ?? true, ctxOf(extra));
+      return ok({ machine: machineView(r.machine), ready: r.ready });
+    } catch (err) {
+      return fail(err);
+    }
+  });
+
   registered["stop-machine"] = server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], inputSchema: inputs["stop-machine"], outputSchema: machineOutput }, async (a, extra) => {
     try {
       return ok(machineView(await (await pick(a.target)).backend.stopMachine(a.name, ctxOf(extra))));

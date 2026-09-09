@@ -100,6 +100,7 @@ export interface CreateArgs extends NetworkArgs {
   cmd?: string[] | undefined;
   env?: Record<string, string> | undefined;
   start?: boolean | undefined;
+  branchable?: boolean | undefined;
 }
 
 export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx = {}) {
@@ -115,6 +116,7 @@ export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx 
     ...(args.mounts ? { mounts: args.mounts } : {}),
     ...(args.storageGb !== undefined ? { storageGb: args.storageGb } : {}),
     ...(args.overlayGb !== undefined ? { overlayGb: args.overlayGb } : {}),
+    ...(args.branchable === true ? { branchable: true } : {}),
     cmd: args.cmd ?? KEEPALIVE_CMD,
     ...(args.env ? { env: args.env } : {}),
     ...(ephemeral ? { ttlSeconds: m.cfg.ephemeralTtlSecs, autoStopSeconds: m.cfg.ephemeralAutoStopSecs } : {}),
@@ -123,7 +125,7 @@ export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx 
   let started = info;
   let ready = false;
   if (args.start ?? true) {
-    started = await m.backend.startMachine(name, ctx);
+    started = await m.backend.startMachine(name, { ...(args.branchable === true ? { branchable: true } : {}), ctx });
     await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
     ready = true;
   }
@@ -134,9 +136,19 @@ export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx 
 // name is a conflict on both targets, so through this server a stopped
 // machine could not be started at all.
 export async function startMachine(m: Machines, name: string, wait: boolean, ctx: CallCtx = {}): Promise<{ machine: MachineView; ready: boolean }> {
-  const machine = await m.backend.startMachine(name, ctx);
+  const machine = await m.backend.startMachine(name, { ctx });
   if (!wait) return { machine, ready: false };
   await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
+  return { machine, ready: true };
+}
+
+// Copy a running branchable machine into a new child and wait until commands
+// run in the child. The source has to have been created or started branchable:
+// neither target can turn it on afterwards, and both say so themselves.
+export async function branchMachine(m: Machines, name: string, childName: string, wait: boolean, ctx: CallCtx = {}): Promise<{ machine: MachineView; ready: boolean }> {
+  const machine = await m.backend.branchMachine(name, childName, ctx);
+  if (!wait) return { machine, ready: false };
+  await waitReady(m.backend, childName, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
   return { machine, ready: true };
 }
 
@@ -271,7 +283,7 @@ export async function runOnce(m: Machines, args: RunOnceArgs, ctx: CallCtx = {})
       ttlSeconds: m.cfg.ephemeralTtlSecs,
       autoStopSeconds: m.cfg.ephemeralAutoStopSecs,
     }, ctx);
-    await m.backend.startMachine(name, ctx);
+    await m.backend.startMachine(name, { ctx });
     await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
     result = await runCommand(m, name, args, { ctx, spill: false });
   } catch (err) {

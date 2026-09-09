@@ -87,6 +87,13 @@ beforeAll(async () => {
           ]),
         );
       }
+      if (url === `/v1/machines/${ID}/fork`) {
+        const body_ = JSON.parse(body) as { name: string };
+        return send(201, JSON.stringify({ ...machine, id: "mach-child", name: body_.name, state: "started", branchable: false }));
+      }
+      if (url === "/v1/machines/mach-notbranchable/fork") {
+        return send(409, "machine 'mcp-src' is not branchable, recreate it with `branchable: true`, start it, and branch the new machine", "text/plain");
+      }
       if (url === "/v1/machines/mach-gone") return send(404, "machine not found");
       if (url === "/v1/machines/mach-flaky") {
         flaky += 1;
@@ -184,6 +191,32 @@ describe("CloudClient", () => {
     await client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "allow", cidrs: ["203.0.113.0/24"] }, ports: [{ guest: 8080 }] });
     await client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "blocked" } });
     expect(seen).toHaveLength(2);
+  });
+
+  it("asks for a branch source on the create, not on the start, and branches by id", async () => {
+    // The service refuses to make an existing machine branchable: its own 409
+    // says to recreate it with the field. So the create carries it and the
+    // start is left alone.
+    seen.length = 0;
+    await client.createMachine({ name: "mcp-src", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "open" }, branchable: true });
+    expect((JSON.parse(seen[0]?.body ?? "{}") as Record<string, unknown>).branchable).toBe(true);
+    seen.length = 0;
+    await client.startMachine(ID, { branchable: true });
+    // No query on the start: it would be silently ignored, which is worse
+    // than not sending it.
+    expect(seen[0]?.url).toBe(`/v1/machines/${ID}/start`);
+    seen.length = 0;
+    const child = await client.branchMachine(ID, "mcp-child");
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([`POST /v1/machines/${ID}/fork`]);
+    expect(JSON.parse(seen[0]?.body ?? "{}")).toEqual({ name: "mcp-child" });
+    expect(child.name).toBe("mcp-child");
+  });
+
+  it("passes the service's own refusal through when the source was not made branchable", async () => {
+    await expect(client.branchMachine("mach-notbranchable", "mcp-child")).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("is not branchable"),
+    });
   });
 
   it("resolves a name to an id before calling a route that takes one", async () => {

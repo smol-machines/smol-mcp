@@ -13,7 +13,7 @@ import {
 } from "../api.js";
 import type { CreateMachineRequest, ExecRequest, ImageInfo, MachineInfo } from "../api.js";
 import { BackendError } from "../backend.js";
-import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView, NetworkPolicy, StartOptions } from "../backend.js";
 import { httpCall, parseEndpoint } from "../http.js";
 import type { Endpoint, HttpResponse } from "../http.js";
 
@@ -150,11 +150,24 @@ export class LocalClient implements MachineBackend {
     return localView(parseBody(res, MachineInfoSchema, `create machine ${opts.name}`));
   }
 
-  async startMachine(name: string, ctx: CallCtx = {}): Promise<MachineView> {
+  async startMachine(name: string, opts: StartOptions = {}): Promise<MachineView> {
+    const ctx = opts.ctx ?? {};
+    // `forkable` is the spec's name for it and the route is /fork; the tool
+    // vocabulary says branch, which is what the CLI and both SDKs now use.
+    const query = opts.branchable === true ? "?forkable=true" : "";
     // A start pulls the image inside the guest; give it the ready budget.
-    const res = await this.call("POST", `${API}/machines/${encodeURIComponent(name)}/start`, { json: {}, timeoutMs: 300_000, signal: ctx.signal });
+    const res = await this.call("POST", `${API}/machines/${encodeURIComponent(name)}/start${query}`, { json: {}, timeoutMs: 300_000, signal: ctx.signal });
     if (res.status !== 200) throw apiError(res, `start machine ${name}`);
     return localView(parseBody(res, MachineInfoSchema, `start machine ${name}`));
+  }
+
+  // The only required field is the child's name. A source that was not
+  // started branchable answers 409, and the API's own message is what the
+  // caller needs, so it is passed through rather than replaced.
+  async branchMachine(name: string, childName: string, ctx: CallCtx = {}): Promise<MachineView> {
+    const res = await this.call("POST", `${API}/machines/${encodeURIComponent(name)}/fork`, { json: { name: childName }, timeoutMs: 300_000, signal: ctx.signal });
+    if (res.status !== 200) throw apiError(res, `branch machine ${name} into ${childName}`);
+    return localView(parseBody(res, MachineInfoSchema, `branch machine ${name}`));
   }
 
   async stopMachine(name: string, ctx: CallCtx = {}): Promise<MachineView> {

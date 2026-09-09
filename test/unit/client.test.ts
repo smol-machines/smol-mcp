@@ -30,6 +30,8 @@ beforeAll(async () => {
       if (url === "/api/v1/machines" && req.method === "GET") return send(200, JSON.stringify({ machines: [{ name: "a", state: "running", cpus: 2, memoryMb: 2048, network: true, pid: 7, createdAt: 1, extraField: "ignored" }] }));
       if (url === "/api/v1/machines" && req.method === "POST") return send(200, JSON.stringify({ name: "b", state: "created", cpus: 1, memoryMb: 1024, network: false, createdAt: 2, mounts: [], ports: [] }));
       if (url === "/api/v1/machines/missing") return send(404, JSON.stringify({ error: "machine 'missing' not found", code: "NOT_FOUND" }));
+      if (url.startsWith("/api/v1/machines/b/start")) return send(200, JSON.stringify({ name: "b", state: "running", cpus: 1, memoryMb: 1024, network: true, createdAt: 2, mounts: [], ports: [] }));
+      if (url === "/api/v1/machines/b/fork") return send(200, JSON.stringify({ name: "child-1", state: "running", cpus: 1, memoryMb: 1024, network: true, createdAt: 3, mounts: [], ports: [] }));
       if (url === "/api/v1/machines/a/exec") return send(200, JSON.stringify({ exitCode: 3, stdout: "out\n", stderr: "err\n", stdoutB64: "b3V0Cg==", stderrB64: "ZXJyCg==" }));
       if (url === "/api/v1/machines/a/files/%2Froot%2Fa.txt" && req.method === "PUT") return send(200, JSON.stringify({ path: "/root/a.txt", size: body.length }));
       if (url === "/api/v1/machines/a/files/%2Froot%2Fa.txt" && req.method === "GET") return send(200, "PAYLOAD", "application/octet-stream");
@@ -106,6 +108,22 @@ describe("LocalClient parsing", () => {
     expect(body.allowedHosts).toEqual(["registry-1.docker.io"]);
     expect(body.network).toBe(false);
     expect(body).not.toHaveProperty("allowedCidrs");
+  });
+
+  it("asks for a branch source with the start query, and branches with the child name alone", async () => {
+    seen.length = 0;
+    await client.startMachine("b", { branchable: true });
+    expect(seen[0]?.url).toBe("/api/v1/machines/b/start?forkable=true");
+    seen.length = 0;
+    await client.startMachine("b");
+    // No query at all when it was not asked for, so an ordinary start is
+    // unchanged.
+    expect(seen[0]?.url).toBe("/api/v1/machines/b/start");
+    seen.length = 0;
+    await client.branchMachine("b", "child-1");
+    expect(seen[0]?.url).toBe("/api/v1/machines/b/fork");
+    // The spec's only required field is the child's name.
+    expect(JSON.parse(seen[0]?.body ?? "{}")).toEqual({ name: "child-1" });
   });
 
   it("turns an env map into the schema's name/value list", async () => {

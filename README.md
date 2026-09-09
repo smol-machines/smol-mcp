@@ -32,10 +32,19 @@ shape whichever target answers it.
 | `read-file` | local, cloud | |
 | `write-file` | local, cloud | Waits for readiness first, so the file is not written under a mount that later hides it. |
 | `start-machine` | local, cloud | Starts a stopped machine and waits until commands run in it. |
+| `branch-machine` | local, cloud | Copies a running branchable machine into a new child, memory and disks included. Local needs Linux or macOS, not Windows. |
 | `stop-machine` | local, cloud | Start it again with `start-machine`; `create-machine` on an existing name is a conflict. |
 | `delete-machine` | local, cloud | |
 | `machine-logs` | local, cloud | Local is the guest console. Cloud is the machine's event log from the control plane: what happened to the machine, not what ran in it. |
 | `pull-image` | local | The cloud control plane pulls the image itself at create. |
+
+Branching copies a running machine, memory and all, so a child starts from
+exactly where its parent was. The source has to be made a branch source when
+it is created (`branchable: true` on `create-machine`), and neither target can
+turn that on for a machine that already exists. The two ask for it in
+different places, which the server handles: locally it is a query parameter on
+the start, on cloud a field on the create. **`branch-machine` on the local
+target needs Linux or macOS**; `smolvm serve` on Windows does not support it.
 
 On cloud, a command, a read or a write in a stopped machine starts it and
 leaves it running. `startedMachine` in the result says when that happened;

@@ -12,7 +12,7 @@
 import { z } from "zod";
 import type { ImageInfo } from "../api.js";
 import { BackendError } from "../backend.js";
-import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView, NetworkPolicy, StartOptions } from "../backend.js";
 
 export const CloudNetworkSchema = z.looseObject({ mode: z.string(), cidrs: z.array(z.string()).nullish() });
 
@@ -259,6 +259,7 @@ export class CloudClient implements MachineBackend {
       source: { type: "image", reference: opts.image },
       resources: { cpus: opts.cpus, memoryMb: opts.memoryMb, ...(opts.storageGb !== undefined ? { diskGb: opts.storageGb } : {}) },
       network: toCloudNetwork(opts.network),
+      ...(opts.branchable === true ? { branchable: true } : {}),
       ...(opts.ports && opts.ports.length > 0 ? { ports: opts.ports.map((p) => ({ port: p.guest })) } : {}),
       ...(opts.env ? { env: opts.env } : {}),
       ...(opts.ttlSeconds !== undefined ? { ttlSeconds: opts.ttlSeconds } : {}),
@@ -267,7 +268,10 @@ export class CloudClient implements MachineBackend {
     return cloudView(await this.call("POST", "/v1/machines", CloudMachineSchema, { json: body, timeoutMs: 180_000, signal: ctx.signal }));
   }
 
-  async startMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {
+  // No branchable here: this API takes it on the create and refuses to turn
+  // it on for a machine that exists, which its own 409 says in as many words.
+  async startMachine(nameOrId: string, opts: StartOptions = {}): Promise<MachineView> {
+    const ctx = opts.ctx ?? {};
     const id = await this.resolve(nameOrId, ctx);
     const res = await this.raw("POST", `/v1/machines/${encodeURIComponent(id)}/start`, { json: {}, timeoutMs: 180_000, signal: ctx.signal });
     if (res.status < 200 || res.status >= 300) throw cloudError("POST", `/v1/machines/${id}/start`, res.status, res.text, res.requestId);
@@ -276,6 +280,18 @@ export class CloudClient implements MachineBackend {
     if (res.text.trim() === "") return this.getMachine(id, ctx);
     const parsed = CloudMachineSchema.safeParse(JSON.parse(res.text));
     return parsed.success ? cloudView(parsed.data) : this.getMachine(id, ctx);
+  }
+
+  // 201 with the child's record. A source that was not created branchable
+  // answers 409, and that message names the fix, so it is passed through.
+  async branchMachine(nameOrId: string, childName: string, ctx: CallCtx = {}): Promise<MachineView> {
+    const id = await this.resolve(nameOrId, ctx);
+    const path = `/v1/machines/${encodeURIComponent(id)}/fork`;
+    const res = await this.raw("POST", path, { json: { name: childName }, timeoutMs: 300_000, signal: ctx.signal });
+    if (res.status < 200 || res.status >= 300) throw cloudError("POST", path, res.status, res.text, res.requestId);
+    const parsed = CloudMachineSchema.safeParse(JSON.parse(res.text));
+    if (!parsed.success) throw new BackendError(`POST ${path}: unexpected response shape: ${parsed.error.message}`, "BAD_RESPONSE");
+    return cloudView(parsed.data);
   }
 
   async stopMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {

@@ -63,6 +63,11 @@ export interface CreateOptions {
   storageGb?: number;
   // Local only: the cloud machine has no separate overlay disk.
   overlayGb?: number;
+  // Make this machine a branch source, so branch-machine can copy it. The two
+  // targets ask for it in different places and this is the one word for both:
+  // local takes it as a query parameter on the start, cloud as a field on the
+  // create. Neither can turn it on afterwards.
+  branchable?: boolean;
   // Workload command. Local only: the cloud create request has no such field
   // and the cloud client drops it (see CloudClient.createMachine).
   cmd?: string[];
@@ -111,6 +116,16 @@ export interface CallCtx {
   signal?: AbortSignal | undefined;
 }
 
+// Starting is where the local target is told a machine may be branched, so
+// this is an options object rather than a second positional parameter.
+export interface StartOptions {
+  // Local only: sent as the `forkable` query parameter. On cloud the same
+  // intent is a create-time field, because the service will not turn it on
+  // for a machine that already exists.
+  branchable?: boolean | undefined;
+  ctx?: CallCtx | undefined;
+}
+
 export interface LogOptions {
   // Lines from the end, when there is no cursor.
   tail: number;
@@ -140,7 +155,10 @@ export interface MachineBackend {
   listMachines(ctx?: CallCtx): Promise<MachineView[]>;
   getMachine(name: string, ctx?: CallCtx): Promise<MachineView>;
   createMachine(opts: CreateOptions, ctx?: CallCtx): Promise<MachineView>;
-  startMachine(name: string, ctx?: CallCtx): Promise<MachineView>;
+  startMachine(name: string, opts?: StartOptions): Promise<MachineView>;
+  // Copy a running branchable machine into a new child, memory and disks
+  // included. The child is running when this returns.
+  branchMachine(name: string, childName: string, ctx?: CallCtx): Promise<MachineView>;
   stopMachine(name: string, ctx?: CallCtx): Promise<MachineView>;
   // Returns the name that was deleted, plus the settled bill where the API
   // reports one (cloud does, on DELETE ...?includeUsage=true; local does not).

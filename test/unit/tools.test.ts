@@ -12,7 +12,7 @@ describe("tool input schemas", () => {
   it("requires target on every tool when both fleets are reachable, with no default", () => {
     for (const name of names) {
       const s = z.object(both[name]);
-      const sample: Record<string, unknown> = { name: "m", image: "alpine", command: ["true"], path: "/x", content: "" };
+      const sample: Record<string, unknown> = { name: "m", image: "alpine", command: ["true"], path: "/x", content: "", childName: "c" };
       // A machine on one fleet is invisible on the other and the two bill
       // differently, so a defaulted target sends work to the wrong one
       // silently.
@@ -26,7 +26,7 @@ describe("tool input schemas", () => {
       for (const name of names) {
         const inputs = toolInputs(mode)[name] as Record<string, unknown>;
         expect(inputs, `${mode} ${name}`).not.toHaveProperty("target");
-        const sample: Record<string, unknown> = { name: "m", image: "alpine", command: ["true"], path: "/x", content: "", target: "cloud" };
+        const sample: Record<string, unknown> = { name: "m", image: "alpine", command: ["true"], path: "/x", content: "", childName: "c", target: "cloud" };
         expect(z.object(toolInputs(mode)[name]).parse(sample), `${mode} ${name}`).not.toHaveProperty("target");
       }
     }

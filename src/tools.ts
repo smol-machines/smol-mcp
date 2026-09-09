@@ -54,6 +54,7 @@ export function toolInputs(mode: TargetMode) {
       cmd: z.array(z.string()).optional().describe("Workload command. Default keeps the container alive (sleep loop). Local only; the cloud create request has no such field."),
       env: envMap,
       start: z.boolean().optional().describe("Start and wait for readiness (default true)"),
+      branchable: z.boolean().optional().describe("Make this machine a branch source, so branch-machine can copy it (default false). Neither target can turn this on afterwards. Local: Linux and macOS only, not Windows."),
     },
     "run-command": {
       ...target,
@@ -92,6 +93,12 @@ export function toolInputs(mode: TargetMode) {
       path: z.string().min(1).describe("Absolute path inside the machine"),
       content: z.string(),
       encoding: z.enum(["utf8", "base64"]).default("utf8"),
+    },
+    "branch-machine": {
+      ...target,
+      name: z.string().min(1).describe("The branch source: a running machine created with branchable true"),
+      childName: z.string().min(1).describe("Name for the new child machine"),
+      wait: z.boolean().optional().describe("Wait until commands run in the child before returning (default true)"),
     },
     "start-machine": {
       ...target,
@@ -142,6 +149,7 @@ export const toolDescriptions: Record<ToolName, string> = {
   "run-once": "Create a throwaway machine from an image, run one command, and delete the machine even on timeout.",
   "read-file": "Read a file from a machine. On cloud a stopped machine is started by the read and left running, and startedMachine says when that happened.",
   "write-file": "Write a file into a machine. Waits until the workload container runs so the file is not lost. On cloud a stopped machine is started by the write and left running, and startedMachine says when that happened.",
+  "branch-machine": "Copy a running branchable machine into a new child, memory and disks included, and wait until commands run in the child. The source must have been created with branchable true; neither target can turn that on afterwards. Local: Linux and macOS only, not Windows.",
   "start-machine": "Start a stopped machine and wait until commands run in it. This is the way back from stop-machine: create-machine on an existing name is a conflict on both targets.",
   "stop-machine": "Stop a running machine. start-machine starts it again.",
   "delete-machine": "Delete a machine, running or not.",
