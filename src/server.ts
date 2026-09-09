@@ -166,9 +166,9 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["run-command"] = server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: inputs["run-command"], outputSchema: commandResultOutput }, async (a, extra) => {
+  registered["run-command"] = server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: inputs["run-command"], outputSchema: { ...commandResultOutput, startedMachine: z.boolean() } }, async (a, extra) => {
     try {
-      return ok({ ...(await ops.runCommand(await pick(a.target), a.name, a, ctxOf(extra))) });
+      return ok({ ...(await ops.runCommandOnMachine(await pick(a.target), a.name, a, ctxOf(extra))) });
     } catch (err) {
       return fail(err);
     }
@@ -182,19 +182,19 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number() } }, async (a, extra) => {
+  registered["read-file"] = server.registerTool("read-file", { description: toolDescriptions["read-file"], inputSchema: inputs["read-file"], outputSchema: { path: z.string(), content: z.string(), encoding: z.string(), size: z.number(), startedMachine: z.boolean() } }, async (a, extra) => {
     try {
-      const buf = await (await pick(a.target)).backend.readFile(a.name, a.path, ctxOf(extra));
-      return ok({ path: a.path, content: buf.toString(a.encoding), encoding: a.encoding, size: buf.length });
+      const r = await ops.readFile(await pick(a.target), a.name, a.path, ctxOf(extra));
+      return ok({ path: a.path, content: r.content.toString(a.encoding), encoding: a.encoding, size: r.content.length, startedMachine: r.startedMachine });
     } catch (err) {
       return fail(err);
     }
   });
 
-  registered["write-file"] = server.registerTool("write-file", { description: toolDescriptions["write-file"], inputSchema: inputs["write-file"], outputSchema: { path: z.string(), size: z.number() } }, async (a, extra) => {
+  registered["write-file"] = server.registerTool("write-file", { description: toolDescriptions["write-file"], inputSchema: inputs["write-file"], outputSchema: { path: z.string(), size: z.number(), startedMachine: z.boolean() } }, async (a, extra) => {
     try {
       const r = await ops.writeFile(await pick(a.target), a.name, a.path, Buffer.from(a.content, a.encoding), ctxOf(extra));
-      return ok({ path: r.path, size: r.size });
+      return ok({ path: r.path, size: r.size, startedMachine: r.startedMachine });
     } catch (err) {
       return fail(err);
     }

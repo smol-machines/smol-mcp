@@ -8,7 +8,7 @@ import { FakeBackend, testConfig } from "./fake-backend.js";
 // name their own.
 const SESSION = "session-under-test";
 import { StateFile } from "../../src/local/state.js";
-import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, networkPolicy, runCommand, runOnce, startMachine, waitReady, writeFile } from "../../src/machines.js";
+import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, networkPolicy, readFile, runCommand, runCommandOnMachine, runOnce, startMachine, waitReady, writeFile } from "../../src/machines.js";
 
 describe("waitReady", () => {
   it("returns once an exec echoes the nonce, and counts the attempts", async () => {
@@ -254,5 +254,40 @@ describe("startMachine", () => {
     const r = await startMachine(m, "keep", false);
     expect(r.ready).toBe(false);
     expect(b.calls.map((c) => c.op)).toEqual(["start"]);
+  });
+});
+
+describe("reporting a machine the cloud target starts for us", () => {
+  const stopped = (name: string) => ({ id: name, name, state: "stopped", cpus: 1, memoryMb: 256, network: "open", createdAt: 1, image: "alpine", pid: null });
+
+  function fleet(target: "local" | "cloud", state: string) {
+    const b = new FakeBackend(target);
+    b.machines.set("m", { ...stopped("m"), state });
+    b.execImpl = async (_name, req) => ({ exitCode: 0, stdout: req.command.includes("READY") ? `${req.command[1]}\n` : "out", stderr: "" });
+    return { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+  }
+
+  it("says a stopped cloud machine was started by the command, the read and the write", async () => {
+    // Cloud exec auto-starts a stopped machine and nothing stops it again, so
+    // a caller who stopped a machine to stop paying is paying again after a
+    // read it thought was passive.
+    const m = fleet("cloud", "stopped");
+    m.backend.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
+    m.backend.files.set("m:/f", Buffer.from("hi"));
+    expect((await runCommandOnMachine(m, "m", { command: ["true"] })).startedMachine).toBe(true);
+    expect((await readFile(m, "m", "/f")).startedMachine).toBe(true);
+    expect((await writeFile(m, "m", "/g", Buffer.from("x"))).startedMachine).toBe(true);
+  });
+
+  it("says nothing was started when the cloud machine is already running", async () => {
+    const m = fleet("cloud", "started");
+    expect((await runCommandOnMachine(m, "m", { command: ["true"] })).startedMachine).toBe(false);
+  });
+
+  it("never claims a start on local, and pays no extra call to find out", async () => {
+    const m = fleet("local", "stopped");
+    const r = await runCommandOnMachine(m, "m", { command: ["true"] });
+    expect(r.startedMachine).toBe(false);
+    expect(m.backend.calls.map((c) => c.op)).toEqual(["exec"]);
   });
 });

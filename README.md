@@ -27,7 +27,7 @@ shape whichever target answers it.
 | `list-machines` | local, cloud | |
 | `get-machine` | local, cloud | Cloud resolves a name to an id with one extra list call. |
 | `create-machine` | local, cloud | Starts the machine and waits until commands run in it. Publishes ports and sizes the disk on both targets; `mounts` and `overlayGb` are local only. |
-| `run-command` | local, cloud | Returns `{stdout, stderr, exitCode, truncated, timedOut}`. |
+| `run-command` | local, cloud | Returns `{stdout, stderr, exitCode, truncated, timedOut, startedMachine}`. |
 | `run-once` | local, cloud | Create, start, exec, delete. Deletes the machine even on timeout. |
 | `read-file` | local, cloud | |
 | `write-file` | local, cloud | Waits for readiness first, so the file is not written under a mount that later hides it. |
@@ -36,6 +36,10 @@ shape whichever target answers it.
 | `delete-machine` | local, cloud | |
 | `machine-logs` | local | The cloud API has an event log, not a console log. |
 | `pull-image` | local | The cloud control plane pulls the image itself at create. |
+
+On cloud, a command, a read or a write in a stopped machine starts it and
+leaves it running. `startedMachine` in the result says when that happened;
+`stop-machine` stops it again.
 
 A machine whose name starts with `mcp-` is ephemeral: the session that created
 it records it and deletes it when that session ends, on either target. A name

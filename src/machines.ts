@@ -146,6 +146,26 @@ export async function deleteMachine(m: Machines, name: string, ctx: CallCtx = {}
   return r.deleted;
 }
 
+// The states in which a machine needs no start. Both APIs answer with their
+// own vocabulary and neither publishes the full set, so anything else is
+// treated as stopped.
+const RUNNING_STATES = new Set(["running", "started"]);
+
+// Cloud exec auto-starts a stopped machine and leaves it running, so a
+// command, a read or a write turns a machine the caller stopped back on, and
+// the bill with it. Reading the state first costs one call on that target and
+// is the only way the caller can be told. The local API starts nothing.
+export async function willAutoStart(m: Machines, name: string, ctx: CallCtx = {}): Promise<boolean> {
+  if (m.backend.target !== "cloud") return false;
+  try {
+    return !RUNNING_STATES.has((await m.backend.getMachine(name, ctx)).state);
+  } catch {
+    // A machine this call cannot read is one the operation below fails on
+    // with its own error, which is the one worth reporting.
+    return false;
+  }
+}
+
 export interface RunArgs {
   command: string | string[];
   timeoutSecs?: number | undefined;
@@ -176,6 +196,18 @@ export async function runCommand(m: Machines, name: string, args: RunArgs, ctx: 
     ctx,
   );
   return shapeResult(r, m.cfg.maxOutputBytes);
+}
+
+// run-once starts its own machine, so it uses runCommand directly; these
+// three wrappers are for a machine the caller named and may have stopped.
+export async function runCommandOnMachine(m: Machines, name: string, args: RunArgs, ctx: CallCtx = {}): Promise<CommandResult & { startedMachine: boolean }> {
+  const startedMachine = await willAutoStart(m, name, ctx);
+  return { ...(await runCommand(m, name, args, ctx)), startedMachine };
+}
+
+export async function readFile(m: Machines, name: string, path: string, ctx: CallCtx = {}): Promise<{ content: Buffer; startedMachine: boolean }> {
+  const startedMachine = await willAutoStart(m, name, ctx);
+  return { content: await m.backend.readFile(name, path, ctx), startedMachine };
 }
 
 export interface RunOnceArgs extends RunArgs, NetworkArgs {
@@ -224,9 +256,12 @@ export async function runOnce(m: Machines, args: RunOnceArgs, ctx: CallCtx = {})
 }
 
 export async function writeFile(m: Machines, name: string, path: string, content: Buffer, ctx: CallCtx = {}) {
+  // The state read comes before readiness, because waiting for readiness is
+  // itself an exec and on cloud that is what starts the machine.
+  const startedMachine = await willAutoStart(m, name, ctx);
   // Readiness first: see waitReady.
   await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
-  return m.backend.writeFile(name, path, content, ctx);
+  return { ...(await m.backend.writeFile(name, path, content, ctx)), startedMachine };
 }
 
 // Delete every ephemeral machine recorded for this process (and for dead
