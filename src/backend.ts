@@ -71,6 +71,13 @@ export interface CreateOptions {
   // Cloud only; the local API has no equivalent, which is why the local target
   // keeps a state file instead.
   ttlSeconds?: number;
+  // Stop the machine after this many seconds with nothing dispatched to it.
+  // Cloud only, and the cheaper half of the backstop: ttlSeconds caps the
+  // bill at the hour, this one ends it at the first idle window.
+  autoStopSeconds?: number;
+  // Delete the machine once it stops rather than keeping it stopped. Cloud
+  // only, and what turns an auto-stop into a cleanup.
+  ephemeral?: boolean;
 }
 
 export interface ExecOptions {

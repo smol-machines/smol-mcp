@@ -141,11 +141,27 @@ describe("runOnce", () => {
     expect((cloud.calls[0]?.args as { network: unknown }).network).toEqual({ mode: "blocked" });
   });
 
-  it("sends a ttlSeconds backstop so a killed server cannot leave a machine billing", async () => {
+  it("sends every lifecycle backstop the API has so a killed server cannot leave a machine billing", async () => {
     const b = new FakeBackend("cloud");
     b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
-    await runOnce({ backend: b, cfg: testConfig({ ephemeralTtlSecs: 600 }), state: undefined, session: SESSION }, { image: "alpine", command: "true" });
-    expect((b.calls[0]?.args as { ttlSeconds: number }).ttlSeconds).toBe(600);
+
+    await runOnce({ backend: b, cfg: testConfig({ ephemeralTtlSecs: 600, ephemeralAutoStopSecs: 60 }), state: undefined, session: SESSION }, { image: "alpine", command: "true" });
+    // ttlSeconds alone caps the bill at an hour; the idle stop ends it at the
+    // first quiet window, and ephemeral is what turns that stop into a delete
+    // rather than a machine kept stopped with its disk still billing.
+    expect(b.calls[0]?.args).toMatchObject({ ttlSeconds: 600, autoStopSeconds: 60, ephemeral: true });
+  });
+
+  it("sends the same backstops for an ephemeral create, and none for a named machine", async () => {
+    const b = new FakeBackend("cloud");
+    const m = { backend: b, cfg: testConfig({ ephemeralTtlSecs: 600, ephemeralAutoStopSecs: 60 }), state: undefined, session: SESSION };
+    await createMachine(m, { image: "alpine", start: false });
+    expect(b.calls[0]?.args).toMatchObject({ ttlSeconds: 600, autoStopSeconds: 60, ephemeral: true });
+    b.calls.length = 0;
+    // A machine the caller named is theirs to keep; nothing here deletes it.
+    await createMachine(m, { name: "keeper", image: "alpine", start: false });
+    const args = b.calls[0]?.args as Record<string, unknown>;
+    for (const key of ["ttlSeconds", "autoStopSeconds", "ephemeral"]) expect(args, key).not.toHaveProperty(key);
   });
 });
 

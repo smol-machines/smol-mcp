@@ -117,7 +117,7 @@ export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx 
     ...(args.overlayGb !== undefined ? { overlayGb: args.overlayGb } : {}),
     cmd: args.cmd ?? KEEPALIVE_CMD,
     ...(args.env ? { env: args.env } : {}),
-    ...(ephemeral ? { ttlSeconds: m.cfg.ephemeralTtlSecs } : {}),
+    ...(ephemeral ? { ttlSeconds: m.cfg.ephemeralTtlSecs, autoStopSeconds: m.cfg.ephemeralAutoStopSecs, ephemeral: true } : {}),
   }, ctx);
   if (ephemeral) m.state?.add(name, m.session, info.id);
   let started = info;
@@ -192,6 +192,8 @@ export async function runOnce(m: Machines, args: RunOnceArgs, ctx: CallCtx = {})
       network: networkPolicy(args, fallback),
       cmd: KEEPALIVE_CMD,
       ttlSeconds: m.cfg.ephemeralTtlSecs,
+      autoStopSeconds: m.cfg.ephemeralAutoStopSecs,
+      ephemeral: true,
     }, ctx);
     await m.backend.startMachine(name, ctx);
     await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);

@@ -26,6 +26,12 @@ export const ConfigSchema = z.object({
   // the API has one (cloud). Long enough not to cut a legitimate run short,
   // short enough that a killed server cannot leave a machine billing forever.
   ephemeralTtlSecs: z.number().int().positive().default(3600),
+  // Idle stop for an ephemeral machine, sent as autoStopSeconds where the API
+  // has one (cloud), together with ephemeral so the stop is a delete. Long
+  // enough that an agent thinking between two calls does not lose its
+  // machine, short enough that an abandoned one is not billed for the hour
+  // ephemeralTtlSecs allows.
+  ephemeralAutoStopSecs: z.number().int().positive().default(900),
   execTimeoutSecs: z.number().int().positive().default(120),
   // Ceiling on the timeoutSecs a caller may ask for. A tool call holds a
   // machine open, and on the cloud target a bill, for as long as it runs, so
@@ -78,6 +84,7 @@ const ENV_KEYS: Record<keyof Config, string> = {
   cpus: "SMOL_MCP_CPUS",
   runOnceNetwork: "SMOL_MCP_RUN_ONCE_NETWORK",
   ephemeralTtlSecs: "SMOL_MCP_EPHEMERAL_TTL_SECS",
+  ephemeralAutoStopSecs: "SMOL_MCP_EPHEMERAL_AUTO_STOP_SECS",
   execTimeoutSecs: "SMOL_MCP_EXEC_TIMEOUT_SECS",
   maxExecTimeoutSecs: "SMOL_MCP_MAX_EXEC_TIMEOUT_SECS",
   maxOutputBytes: "SMOL_MCP_MAX_OUTPUT_BYTES",

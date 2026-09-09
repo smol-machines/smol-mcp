@@ -135,6 +135,7 @@ dropping unknown fields is exactly the failure this avoids.
 | readiness timeout | `SMOL_MCP_READY_TIMEOUT_SECS` | 120 s | Covers a cold image pull inside the guest. |
 | run-once network (local) | `SMOL_MCP_RUN_ONCE_NETWORK` | `open` | See below. |
 | ephemeral TTL | `SMOL_MCP_EPHEMERAL_TTL_SECS` | 3600 s | Sent as `ttlSeconds` where the API has one, so a killed server cannot leave a cloud machine billing forever. |
+| ephemeral idle stop | `SMOL_MCP_EPHEMERAL_AUTO_STOP_SECS` | 900 s | Sent as `autoStopSeconds` with `ephemeral: true`, so an abandoned cloud machine stops and is deleted at the first quiet window instead of billing to the TTL. |
 | machine prefix | `SMOL_MCP_MACHINE_PREFIX` | `mcp-` | The marker that makes a machine ephemeral. |
 | HTTP bind | `SMOL_MCP_HTTP_HOST` | `127.0.0.1` | HTTP transport only. Publishing the listener is a decision, not a default. |
 | HTTP port | `SMOL_MCP_HTTP_PORT` | 8080 | HTTP transport only. What a smol machine publishes by default. |
