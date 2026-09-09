@@ -139,6 +139,7 @@ dropping unknown fields is exactly the failure this avoids.
 | HTTP port | `SMOL_MCP_HTTP_PORT` | 8080 | HTTP transport only. What a smol machine publishes by default. |
 | HTTP path | `SMOL_MCP_HTTP_PATH` | `/mcp` | HTTP transport only. Everything else on the listener is a 404. |
 | HTTP token | `SMOL_MCP_AUTH_TOKEN` | none | HTTP transport only, and required: it refuses to start without one. |
+| HTTP idle session | `SMOL_MCP_HTTP_SESSION_IDLE_SECS` | 1800 s | A session with no request in flight and none for this long is closed, and its ephemeral machines with it. A running tool call keeps its session alive however long it takes. |
 | HTTP Host allow-list | `SMOL_MCP_HTTP_ALLOWED_HOSTS` | the loopback names of the bound port | Comma separated. Off loopback the name is not knowable here, so name it or the Host check does nothing and the startup log says so. |
 | HTTP Origin allow-list | `SMOL_MCP_HTTP_ALLOWED_ORIGINS` | none | Comma separated. Empty means no browser origin is expected; a request carrying one is refused only when this names some other value. |
 

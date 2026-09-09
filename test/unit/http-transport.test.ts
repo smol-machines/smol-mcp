@@ -281,6 +281,48 @@ describe("http transport", () => {
     expect(good.status).toBe(200);
   });
 
+  it("closes an idle session and deletes the machines it left behind", async () => {
+    // A client that goes away without sending DELETE used to leave its
+    // session, its server instance and its ephemeral machines for the life of
+    // the process.
+    const { backend, url } = await start({ httpSessionIdleSecs: 1 });
+    // Readiness answers at once, so the create is not the thing being timed.
+    backend.execImpl = async (_name, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
+    const { client, transport } = await connect(url);
+    await client.callTool({ name: "create-machine", arguments: { target: "local", image: "alpine" } });
+    const created = backend.calls.find((c) => c.op === "create")?.name;
+    expect(backend.machines.has(String(created))).toBe(true);
+
+    await expect.poll(() => backend.machines.has(String(created)), { timeout: 8000 }).toBe(false);
+    expect(running?.sessions).toBe(0);
+    await transport.close().catch(() => {});
+  });
+
+  it("keeps a session whose tool call is still running, however long it takes", async () => {
+    // Creating a machine holds the request open while the machine boots, and
+    // a sweep that reads "no request completed lately" as idle closes the
+    // session out from under a call that is doing exactly what was asked.
+    const { url } = await start({ httpSessionIdleSecs: 1, readyTimeoutSecs: 4 });
+    const { client, transport } = await connect(url);
+    // Readiness never answers, so the call runs to the readiness timeout,
+    // which is four times the idle limit.
+    const res = await client.callTool({ name: "create-machine", arguments: { target: "local", image: "alpine" } });
+    expect(res.isError).toBe(true);
+    expect(running?.sessions).toBe(1);
+    await transport.close();
+  });
+
+  it("keeps a session that is still being used", async () => {
+    const { url } = await start({ httpSessionIdleSecs: 2 });
+    const { client, transport } = await connect(url);
+    for (let i = 0; i < 4; i += 1) {
+      await new Promise((r) => setTimeout(r, 700));
+      await client.callTool({ name: "list-machines", arguments: { target: "local" } });
+    }
+    expect(running?.sessions).toBe(1);
+    await transport.close();
+  });
+
   it("answers 404 off the configured path and 400 for a body that is not an initialize", async () => {
     const { url } = await start();
     const wrong = await fetch(url.replace("/mcp", "/nope"), { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: "{}" });

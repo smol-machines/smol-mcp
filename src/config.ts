@@ -48,6 +48,11 @@ export const ConfigSchema = z.object({
   // bound to loopback: the loopback names for the port. Empty and bound to
   // anything else: the name is not knowable here, so the Host check is off
   // and the bearer token is the only gate.
+  // How long a session may go without a request before it is closed and its
+  // ephemeral machines are deleted. A client that goes away without sending
+  // DELETE otherwise leaves a server instance, and its machines, for the life
+  // of the process.
+  httpSessionIdleSecs: z.number().int().positive().default(1800),
   httpAllowedHosts: z.string().default(""),
   // Origin header values a browser page may carry, comma separated. Empty
   // means no browser origin is expected; a request that carries one is
@@ -80,6 +85,7 @@ const ENV_KEYS: Record<keyof Config, string> = {
   httpHost: "SMOL_MCP_HTTP_HOST",
   httpPort: "SMOL_MCP_HTTP_PORT",
   httpPath: "SMOL_MCP_HTTP_PATH",
+  httpSessionIdleSecs: "SMOL_MCP_HTTP_SESSION_IDLE_SECS",
   httpAllowedHosts: "SMOL_MCP_HTTP_ALLOWED_HOSTS",
   httpAllowedOrigins: "SMOL_MCP_HTTP_ALLOWED_ORIGINS",
   authToken: "SMOL_MCP_AUTH_TOKEN",

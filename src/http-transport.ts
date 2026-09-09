@@ -111,7 +111,7 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
   // One McpServer per session: the SDK binds a server to a single transport,
   // and a session's ephemeral machines are deleted when its transport closes,
   // which is the HTTP equivalent of stdin EOF.
-  const sessions = new Map<string, { transport: StreamableHTTPServerTransport; app: SmolMcp }>();
+  const sessions = new Map<string, { transport: StreamableHTTPServerTransport; app: SmolMcp; lastSeen: number; inFlight: number }>();
 
   const openSession = async (port: number): Promise<StreamableHTTPServerTransport> => {
     const app = await createServer({ cfg, log, ...(opts.localBackend ? { localBackend: opts.localBackend } : {}) });
@@ -130,7 +130,7 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
       // that needs no streaming should not depend on one.
       enableJsonResponse: true,
       onsessioninitialized: (id) => {
-        sessions.set(id, { transport, app });
+        sessions.set(id, { transport, app, lastSeen: Date.now(), inFlight: 0 });
         log(`http session ${id} opened (${sessions.size} open)`);
       },
     });
@@ -164,6 +164,19 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
 
     const sessionId = req.headers["mcp-session-id"];
     const known = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+    if (known) {
+      // A tool call can hold a request open for minutes: creating a machine
+      // waits for it to boot. Idle means no request at all, so a session is
+      // marked busy for as long as one is in flight and again when it ends.
+      known.lastSeen = Date.now();
+      known.inFlight += 1;
+      const done = () => {
+        known.lastSeen = Date.now();
+        known.inFlight = Math.max(0, known.inFlight - 1);
+      };
+      res.on("close", done);
+      res.on("finish", done);
+    }
 
     if (req.method === "GET" || req.method === "DELETE") {
       if (!known) {
@@ -211,6 +224,21 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
     });
   });
 
+  // A client that goes away without sending DELETE leaves its session, its
+  // server instance and its ephemeral machines behind for the life of the
+  // process. Closing the transport runs the same cleanup the DELETE does.
+  const sweepMs = Math.max(1000, Math.floor((cfg.httpSessionIdleSecs * 1000) / 4));
+  const sweep = setInterval(() => {
+    const deadline = Date.now() - cfg.httpSessionIdleSecs * 1000;
+    for (const [id, s] of [...sessions.entries()]) {
+      if (s.inFlight > 0 || s.lastSeen > deadline) continue;
+      log(`http session ${id} idle for ${cfg.httpSessionIdleSecs} s, closing it`);
+      sessions.delete(id);
+      void s.transport.close();
+    }
+  }, sweepMs);
+  sweep.unref?.();
+
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(cfg.httpPort, cfg.httpHost, () => {
@@ -232,9 +260,15 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
       return sessions.size;
     },
     close: async () => {
+      clearInterval(sweep);
       // Sessions first: closing the listener does not run their cleanup, and
       // an ephemeral machine outlives this process if nothing deletes it.
       for (const { transport } of [...sessions.values()]) await transport.close();
+      // A kept-alive connection with no request in flight is not closed by
+      // server.close(), which then waits for a client that may never come
+      // back; on the exit path that is a shutdown that never finishes.
+      server.closeIdleConnections();
+      server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
