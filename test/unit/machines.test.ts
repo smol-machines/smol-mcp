@@ -326,3 +326,48 @@ describe("readFile ranges", () => {
     expect(r.eof).toBe(true);
   });
 });
+
+describe("output too big for one result", () => {
+  const big = "L".repeat(5000);
+
+  function fleet() {
+    const b = new FakeBackend();
+    b.execImpl = async () => ({ exitCode: 1, stdout: big, stderr: "the last line is the message\n" });
+    return { backend: b, cfg: testConfig({ maxOutputBytes: 100 }), state: undefined, session: SESSION };
+  }
+
+  it("writes the whole stream into the machine and names the path, the stream and the byte count", async () => {
+    const m = fleet();
+    const r = await runCommand(m, "m", { command: ["noisy"] });
+    expect(r.truncated).toBe(true);
+    expect(r.overflow).toEqual([{ stream: "stdout", path: expect.stringMatching(/^\/tmp\/smol-mcp-[0-9a-f]{8}\.stdout$/), bytes: 5000 }]);
+    // The head and the tail are both in the result, and the path is the way
+    // to the 4900 bytes between them.
+    expect(r.stdout.startsWith("LLL")).toBe(true);
+    expect(r.stdout).toContain("bytes dropped");
+    expect(r.stdout).toContain(String(r.overflow[0]?.path));
+    // stderr fitted, so nothing was written for it.
+    expect(m.backend.files.get(`m:${String(r.overflow[0]?.path)}`)?.length).toBe(5000);
+    expect(m.backend.calls.filter((c) => c.op === "write")).toHaveLength(1);
+  });
+
+  it("still answers the call when the spill cannot be written", async () => {
+    const m = fleet();
+    m.backend.writeFile = async () => {
+      throw new Error("read-only guest");
+    };
+    const r = await runCommand(m, "m", { command: ["noisy"] });
+    expect(r.truncated).toBe(true);
+    expect(r.overflow).toEqual([]);
+    expect(r.exitCode).toBe(1);
+  });
+
+  it("does not spill for run-once, whose machine is deleted before anyone could read it", async () => {
+    const b = new FakeBackend();
+    b.execImpl = async (_n, req) => (req.command[0] === "echo" ? { exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" } : { exitCode: 0, stdout: big, stderr: "" });
+    const r = await runOnce({ backend: b, cfg: testConfig({ maxOutputBytes: 100 }), state: undefined, session: SESSION }, { image: "alpine", command: ["noisy"] });
+    expect(r.truncated).toBe(true);
+    expect(r.overflow).toEqual([]);
+    expect(b.calls.some((c) => c.op === "write")).toBe(false);
+  });
+});

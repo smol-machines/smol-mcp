@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { CallCtx, MachineBackend, MachineView, MountSpec, NetworkPolicy, PortSpec } from "./backend.js";
 import { BackendError } from "./backend.js";
 import type { Config } from "./config.js";
-import { shapeResult, toArgv } from "./output.js";
+import { noteOverflow, shapeResult, toArgv } from "./output.js";
 import type { CommandResult } from "./output.js";
 
 // What a target needs to remember about the machines a session created. The
@@ -174,7 +174,19 @@ export interface RunArgs {
   stdin?: string | undefined;
 }
 
-export async function runCommand(m: Machines, name: string, args: RunArgs, ctx: CallCtx = {}): Promise<CommandResult> {
+// The fourth parameter is one options object rather than two positional
+// ones: the caller's abort context and whether an oversized stream is spilled
+// are independent, and both belong to the call. Spilling is for a machine
+// that outlives it, so run-once turns it off: run-once deletes its own
+// machine, and a file written into it is gone before anyone could read it.
+export interface RunOptions {
+  ctx?: CallCtx | undefined;
+  spill?: boolean | undefined;
+}
+
+export async function runCommand(m: Machines, name: string, args: RunArgs, opts: RunOptions = {}): Promise<CommandResult> {
+  const ctx = opts.ctx ?? {};
+  const spill = opts.spill ?? true;
   const timeoutSecs = args.timeoutSecs ?? m.cfg.execTimeoutSecs;
   // A tool call holds a machine, and on the cloud target a bill, for as long
   // as it runs. Without a ceiling the caller sets that duration and nothing
@@ -195,14 +207,42 @@ export async function runCommand(m: Machines, name: string, args: RunArgs, ctx: 
     (timeoutSecs + 30) * 1000,
     ctx,
   );
-  return shapeResult(r, m.cfg.maxOutputBytes);
+  const shaped = shapeResult(r, m.cfg.maxOutputBytes);
+  if (!shaped.truncated || !spill) return shaped;
+  return spillOverflow(m, name, r, shaped);
+}
+
+// Write the streams that did not fit back into the machine, and say where.
+// The bytes crossed the wire once already; what this buys is a caller that
+// can page the whole thing with read-file, or grep it in the guest, instead
+// of a result that says a number of bytes are gone and stops there.
+async function spillOverflow(m: Machines, name: string, raw: { stdout: string; stderr: string }, shaped: CommandResult): Promise<CommandResult> {
+  const out = { ...shaped };
+  const stamp = randomBytes(4).toString("hex");
+  for (const stream of ["stdout", "stderr"] as const) {
+    const text = raw[stream];
+    const buf = Buffer.from(text, "utf8");
+    if (buf.length <= m.cfg.maxOutputBytes) continue;
+    // A flat path in /tmp: neither files route promises to create a parent
+    // directory, and a failed spill must not fail the command that ran.
+    const path = `/tmp/smol-mcp-${stamp}.${stream}`;
+    try {
+      await m.backend.writeFile(name, path, buf);
+    } catch {
+      continue;
+    }
+    const overflow = { stream, path, bytes: buf.length };
+    out.overflow = [...out.overflow, overflow];
+    out[stream] = noteOverflow(out[stream], overflow);
+  }
+  return out;
 }
 
 // run-once starts its own machine, so it uses runCommand directly; these
 // three wrappers are for a machine the caller named and may have stopped.
 export async function runCommandOnMachine(m: Machines, name: string, args: RunArgs, ctx: CallCtx = {}): Promise<CommandResult & { startedMachine: boolean }> {
   const startedMachine = await willAutoStart(m, name, ctx);
-  return { ...(await runCommand(m, name, args, ctx)), startedMachine };
+  return { ...(await runCommand(m, name, args, { ctx })), startedMachine };
 }
 
 export interface RunOnceArgs extends RunArgs, NetworkArgs {
@@ -234,7 +274,7 @@ export async function runOnce(m: Machines, args: RunOnceArgs, ctx: CallCtx = {})
     }, ctx);
     await m.backend.startMachine(name, ctx);
     await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
-    result = await runCommand(m, name, args, ctx);
+    result = await runCommand(m, name, args, { ctx, spill: false });
   } catch (err) {
     failure = err;
   }

@@ -114,6 +114,7 @@ export const commandResultOutput = {
   exitCode: z.number().int(),
   truncated: z.boolean(),
   timedOut: z.boolean(),
+  overflow: z.array(z.object({ stream: z.enum(["stdout", "stderr"]), path: z.string(), bytes: z.number().int() })),
 };
 
 export const machineOutput = {
@@ -132,7 +133,7 @@ export const toolDescriptions: Record<ToolName, string> = {
   "list-machines": "List machines on the target.",
   "get-machine": "Get one machine's state and resources.",
   "create-machine": "Create a machine from an OCI image, start it, and wait until commands run in it.",
-  "run-command": "Run a command in a machine. exitCode comes from the guest; a failing command is not an error. On cloud a stopped machine is started by the command and left running, and startedMachine says when that happened.",
+  "run-command": "Run a command in a machine. exitCode comes from the guest; a failing command is not an error. Output past the budget keeps its head and its tail, and the whole stream is written into the machine at the path the result names. On cloud a stopped machine is started by the command and left running, and startedMachine says when that happened.",
   "run-once": "Create a throwaway machine from an image, run one command, and delete the machine even on timeout.",
   "read-file": "Read a file from a machine. On cloud a stopped machine is started by the read and left running, and startedMachine says when that happened.",
   "write-file": "Write a file into a machine. Waits until the workload container runs so the file is not lost. On cloud a stopped machine is started by the write and left running, and startedMachine says when that happened.",

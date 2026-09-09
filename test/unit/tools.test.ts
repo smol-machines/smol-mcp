@@ -112,12 +112,16 @@ describe("output shaping", () => {
     expect(toArgv(["ls", "-l"])).toEqual(["ls", "-l"]);
   });
 
-  it("truncates to the byte budget and says how much was dropped", () => {
-    const big = "x".repeat(100);
-    const r = truncate(big, 10);
+  it("keeps the head and the tail inside the byte budget and says what fell out", () => {
+    // The tail matters: a failing command's last line is the message, and a
+    // head-only cut is exactly the part a caller does not need.
+    const r = truncate(`START${"x".repeat(90)}END`, 12);
     expect(r.truncated).toBe(true);
-    expect(r.text.startsWith("xxxxxxxxxx\n[truncated: 90 more bytes]")).toBe(true);
-    expect(truncate("small", 10)).toEqual({ text: "small", truncated: false });
+    expect(r.bytes).toBe(98);
+    // 12 bytes of budget: 8 of head, 4 of tail, and the count of what fell
+    // between them.
+    expect(r.text).toBe("STARTxxx\n[... 86 bytes dropped ...]\nxEND");
+    expect(truncate("small", 10)).toEqual({ text: "small", truncated: false, bytes: 5 });
   });
 
   it("reports a cut the API made, not only the one this server made", () => {
@@ -132,7 +136,7 @@ describe("output shaping", () => {
 
   it("reads the exit code from the body and flags the server-side timeout", () => {
     const r = shapeResult({ exitCode: 3, stdout: "out\n", stderr: "err\n" }, 1024);
-    expect(r).toEqual({ stdout: "out\n", stderr: "err\n", exitCode: 3, truncated: false, timedOut: false });
+    expect(r).toEqual({ stdout: "out\n", stderr: "err\n", exitCode: 3, truncated: false, timedOut: false, overflow: [] });
     const t = shapeResult({ exitCode: 124, stdout: "before\n", stderr: "\ncommand timed out after 2000ms" }, 1024);
     expect(t.timedOut).toBe(true);
     expect(t.exitCode).toBe(124);

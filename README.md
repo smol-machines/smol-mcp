@@ -136,7 +136,7 @@ dropping unknown fields is exactly the failure this avoids.
 | cpus | `SMOL_MCP_CPUS` | 2 | One core leaves nothing for the guest agent while a command runs. |
 | exec timeout | `SMOL_MCP_EXEC_TIMEOUT_SECS` | 120 s | Long enough for a package install, short enough that a hung command does not hold a tool call open. |
 | exec timeout ceiling | `SMOL_MCP_MAX_EXEC_TIMEOUT_SECS` | 900 s | The longest `timeoutSecs` a caller may ask for. A tool call holds a machine, and on cloud a bill, for as long as it runs. |
-| output truncation | `SMOL_MCP_MAX_OUTPUT_BYTES` | 64 KiB per stream | A tool result is read by a model with a context budget; past this the tail stops carrying information. Truncation is reported, never silent. |
+| output truncation | `SMOL_MCP_MAX_OUTPUT_BYTES` | 64 KiB per stream | A tool result is read by a model with a context budget. Past this the result keeps the head and the tail, says how many bytes fell between them, and writes the whole stream into the machine so it can be read back. Truncation is reported, never silent. |
 | readiness timeout | `SMOL_MCP_READY_TIMEOUT_SECS` | 120 s | Covers a cold image pull inside the guest. |
 | run-once network (local) | `SMOL_MCP_RUN_ONCE_NETWORK` | `open` | See below. |
 | ephemeral TTL | `SMOL_MCP_EPHEMERAL_TTL_SECS` | 3600 s | Sent as `ttlSeconds` where the API has one, so a killed server cannot leave a cloud machine billing forever. |

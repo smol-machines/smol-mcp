@@ -7,15 +7,32 @@ export interface CommandResult {
   exitCode: number;
   truncated: boolean;
   timedOut: boolean;
+  // Where a stream too big for the result was written inside the machine,
+  // and how many bytes it holds. Empty when nothing was dropped.
+  overflow: Overflow[];
 }
 
-// Keep the head of each stream up to maxBytes (measured in UTF-8 bytes), and
-// say so; a client that gets a silently cut log reads it as complete.
-export function truncate(text: string, maxBytes: number): { text: string; truncated: boolean } {
+export interface Overflow {
+  stream: "stdout" | "stderr";
+  path: string;
+  bytes: number;
+}
+
+// Keep the head and the tail of a stream inside maxBytes (measured in UTF-8
+// bytes) and say what was dropped between them. The head alone loses the line
+// a failing command ends on, which is usually the one the caller wanted.
+const HEAD_SHARE = 2 / 3;
+
+export function truncate(text: string, maxBytes: number): { text: string; truncated: boolean; bytes: number } {
   const buf = Buffer.from(text, "utf8");
-  if (buf.length <= maxBytes) return { text, truncated: false };
-  const head = buf.subarray(0, maxBytes).toString("utf8").replace(/�$/, "");
-  return { text: `${head}\n[truncated: ${buf.length - maxBytes} more bytes]`, truncated: true };
+  if (buf.length <= maxBytes) return { text, truncated: false, bytes: buf.length };
+  const headBytes = Math.max(1, Math.floor(maxBytes * HEAD_SHARE));
+  const tailBytes = Math.max(0, maxBytes - headBytes);
+  // A cut can land inside a multi-byte character; the replacement character
+  // it decodes to is dropped rather than left in the payload as damage.
+  const head = buf.subarray(0, headBytes).toString("utf8").replace(/�$/, "");
+  const tail = tailBytes === 0 ? "" : buf.subarray(buf.length - tailBytes).toString("utf8").replace(/^�/, "");
+  return { text: `${head}\n[... ${buf.length - headBytes - tailBytes} bytes dropped ...]\n${tail}`, truncated: true, bytes: buf.length };
 }
 
 // The API reports a server-side timeout as exit 124 with a marker on stderr.
@@ -33,7 +50,14 @@ export function shapeResult(r: ExecResult, maxBytes: number): CommandResult {
     exitCode: r.exitCode,
     truncated: out.truncated || err.truncated || serverSide,
     timedOut: r.exitCode === 124 && r.stderr.includes("command timed out"),
+    overflow: [],
   };
+}
+
+// The line that turns a dropped middle into something the caller can go and
+// get. Appended after the spill, because the path is not known before it.
+export function noteOverflow(text: string, o: Overflow): string {
+  return `${text}\n[full ${o.stream}, ${o.bytes} bytes, is in the machine at ${o.path}]`;
 }
 
 // Accept either an argv array or a shell string.
