@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigSchema, loadConfig, resolveTargets } from "../../src/config.js";
+import { ConfigSchema, allowedHosts, allowedOrigins, loadConfig, resolveTargets } from "../../src/config.js";
 
 describe("config", () => {
   it("ships the tethered defaults", () => {
@@ -45,6 +45,17 @@ describe("config", () => {
     expect(resolveTargets(ConfigSchema.parse({ cloudToken: "k", targets: "local" }))).toBe("local");
     expect(resolveTargets(ConfigSchema.parse({ targets: "cloud" }))).toBe("cloud");
     expect(resolveTargets(loadConfig({ SMOL_MCP_TARGETS: "both" }, "/nonexistent/config.json"))).toBe("both");
+  });
+
+  it("defaults the Host allow-list to the loopback names of the bound port, and to nothing off loopback", () => {
+    const cfg = ConfigSchema.parse({});
+    expect(allowedHosts(cfg, 8080)).toEqual(["127.0.0.1:8080", "localhost:8080", "[::1]:8080"]);
+    // A published listener answers to a name this process cannot know, so
+    // the check is off until the operator names it, and the startup log says
+    // so rather than pretending the list is doing something.
+    expect(allowedHosts(ConfigSchema.parse({ httpHost: "0.0.0.0" }), 8080)).toEqual([]);
+    expect(allowedHosts(ConfigSchema.parse({ httpHost: "0.0.0.0", httpAllowedHosts: "mcp.example, mcp.example:443" }), 8080)).toEqual(["mcp.example", "mcp.example:443"]);
+    expect(allowedOrigins(ConfigSchema.parse({ httpAllowedOrigins: " https://a.example ,, https://b.example " }))).toEqual(["https://a.example", "https://b.example"]);
   });
 
   it("uses XDG_RUNTIME_DIR for the runtime dir when set", () => {

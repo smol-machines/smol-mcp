@@ -44,6 +44,15 @@ export const ConfigSchema = z.object({
   httpHost: z.string().default("127.0.0.1"),
   httpPort: z.number().int().positive().default(8080),
   httpPath: z.string().default("/mcp"),
+  // Host header values this listener answers to, comma separated. Empty and
+  // bound to loopback: the loopback names for the port. Empty and bound to
+  // anything else: the name is not knowable here, so the Host check is off
+  // and the bearer token is the only gate.
+  httpAllowedHosts: z.string().default(""),
+  // Origin header values a browser page may carry, comma separated. Empty
+  // means no browser origin is expected; a request that carries one is
+  // refused only when this names some other value.
+  httpAllowedOrigins: z.string().default(""),
   // Required by the HTTP transport, which refuses to start without it. There
   // is no default: a default would be a published credential.
   authToken: z.string().default(""),
@@ -71,6 +80,8 @@ const ENV_KEYS: Record<keyof Config, string> = {
   httpHost: "SMOL_MCP_HTTP_HOST",
   httpPort: "SMOL_MCP_HTTP_PORT",
   httpPath: "SMOL_MCP_HTTP_PATH",
+  httpAllowedHosts: "SMOL_MCP_HTTP_ALLOWED_HOSTS",
+  httpAllowedOrigins: "SMOL_MCP_HTTP_ALLOWED_ORIGINS",
   authToken: "SMOL_MCP_AUTH_TOKEN",
 };
 
@@ -129,4 +140,29 @@ export type TargetMode = "local" | "cloud" | "both";
 export function resolveTargets(cfg: Config): TargetMode {
   if (cfg.targets !== "auto") return cfg.targets;
   return cfg.cloudToken === "" ? "local" : "both";
+}
+
+export function isLoopback(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+}
+
+// The Host values this listener answers to. A browser reaching a private
+// address through a rebound name sends the name it dialled, so an allow-list
+// of the names this server expects is what separates them.
+export function allowedHosts(cfg: Config, port = cfg.httpPort): string[] {
+  const named = splitList(cfg.httpAllowedHosts);
+  if (named.length > 0) return named;
+  if (!isLoopback(cfg.httpHost)) return [];
+  return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+}
+
+export function allowedOrigins(cfg: Config): string[] {
+  return splitList(cfg.httpAllowedOrigins);
+}
+
+function splitList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
 }

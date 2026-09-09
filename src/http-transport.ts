@@ -12,6 +12,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { MachineBackend } from "./backend.js";
 import type { Config } from "./config.js";
+import { allowedHosts, allowedOrigins } from "./config.js";
 import { createServer } from "./server.js";
 import type { SmolMcp } from "./server.js";
 
@@ -112,10 +113,18 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
   // which is the HTTP equivalent of stdin EOF.
   const sessions = new Map<string, { transport: StreamableHTTPServerTransport; app: SmolMcp }>();
 
-  const openSession = async (): Promise<StreamableHTTPServerTransport> => {
+  const openSession = async (port: number): Promise<StreamableHTTPServerTransport> => {
     const app = await createServer({ cfg, log, ...(opts.localBackend ? { localBackend: opts.localBackend } : {}) });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
+      // A page in a browser can be made to resolve a name to this address and
+      // then talk to it; the token is what stops it, and the Host and Origin
+      // checks are what stop it before that. Both lists come from config, and
+      // an empty allow-list checks nothing, so the loopback default names the
+      // addresses a loopback bind can be reached at.
+      enableDnsRebindingProtection: true,
+      allowedHosts: allowedHosts(cfg, port),
+      allowedOrigins: allowedOrigins(cfg),
       // Plain JSON replies rather than an SSE frame per response: the cloud
       // connect bridge is an HTTP proxy of unknown buffering, and a tool call
       // that needs no streaming should not depend on one.
@@ -140,13 +149,16 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    // Authenticate first, then route. The other order answered an
+    // unauthenticated request with the endpoint path and the JSON-RPC shape,
+    // which is the whole map of this listener given away for free.
+    if (!tokenMatches(presentedToken(req.headers), cfg.authToken)) {
+      rpcError(res, 401, -32001, "unauthorized: send the bearer token in authorization or x-smol-mcp-token", { "www-authenticate": "Bearer" });
+      return;
+    }
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname !== cfg.httpPath) {
       rpcError(res, 404, -32004, `no MCP endpoint at ${url.pathname}; it is at ${cfg.httpPath}`);
-      return;
-    }
-    if (!tokenMatches(presentedToken(req.headers), cfg.authToken)) {
-      rpcError(res, 401, -32001, "unauthorized: send the bearer token in authorization or x-smol-mcp-token", { "www-authenticate": "Bearer" });
       return;
     }
 
@@ -180,12 +192,16 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
       return;
     }
     if (sessionId === undefined && isInitializeRequest(body)) {
-      const transport = await openSession();
+      const transport = await openSession(port);
       await transport.handleRequest(req, res, body);
       return;
     }
     rpcError(res, 400, -32000, "no valid mcp-session-id, and this is not an initialize request");
   };
+
+  // The port is not known until the listener is bound (a test asks for 0),
+  // and the Host allow-list is built from it.
+  let port = cfg.httpPort;
 
   const server = createHttpServer((req, res) => {
     void handle(req, res).catch((err: unknown) => {
@@ -203,8 +219,11 @@ export async function startHttpTransport(opts: HttpTransportOptions): Promise<Ht
     });
   });
   const address = server.address();
-  const port = typeof address === "object" && address !== null ? address.port : cfg.httpPort;
+  port = typeof address === "object" && address !== null ? address.port : cfg.httpPort;
   log(`listening for MCP over HTTP on http://${cfg.httpHost}:${port}${cfg.httpPath}`);
+  if (allowedHosts(cfg, port).length === 0) {
+    log(`no Host allow-list for a listener bound to ${cfg.httpHost}: set SMOL_MCP_HTTP_ALLOWED_HOSTS to the name clients dial, or the bearer token is the only gate`);
+  }
 
   return {
     server,

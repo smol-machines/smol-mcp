@@ -2,6 +2,7 @@
 // against a fake backend. No smolvm, no network, no key.
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -36,6 +37,34 @@ function readText(read: { contents: unknown[] }): string {
   const first = read.contents[0] as { text?: unknown } | undefined;
   if (first === undefined || typeof first.text !== "string") throw new Error("resource returned no text");
   return first.text;
+}
+
+// fetch will not set a Host header, so this one goes out over node:http.
+function rawPost(url: string, host: string): Promise<{ status: number; body: string }> {
+  const target = new URL(url);
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        method: "POST",
+        host: target.hostname,
+        port: target.port,
+        path: target.pathname,
+        headers: {
+          host,
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (c: Buffer) => (body += c.toString("utf8")));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
+    req.on("error", reject);
+    req.end(JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1, params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }));
+  });
 }
 
 async function connect(url: string, token = TOKEN) {
@@ -215,6 +244,41 @@ describe("http transport", () => {
     await b.transport.terminateSession();
     await b.client.close();
     await expect.poll(() => backend.machines.size).toBe(0);
+  });
+
+  it("answers an unauthenticated request without saying where the endpoint is", async () => {
+    // The path check used to answer first, so anyone who could reach the
+    // port learned the endpoint path and the JSON-RPC shape from a request
+    // that carried no token at all.
+    const { url } = await start();
+    const res = await fetch(url.replace("/mcp", "/nope"), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toMatch(/unauthorized/);
+    expect(body.error.message).not.toMatch(/\/mcp/);
+  });
+
+  it("refuses a Host header this listener does not answer to", async () => {
+    // A browser page pointed at a name that resolves to this address sends
+    // that name, and it is the one thing about the request the page cannot
+    // choose to omit. fetch refuses to set Host, so this speaks HTTP.
+    const { url } = await start();
+    const res = await rawPost(url, "attacker.example");
+    expect(res.status).toBe(403);
+    expect(res.body).toMatch(/Host header/);
+  });
+
+  it("refuses an Origin the config does not name, and accepts one it does", async () => {
+    const { url } = await start({ httpAllowedOrigins: "https://app.example" });
+    const init = () => ({
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1, params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }),
+    });
+    const bad = await fetch(url, { ...init(), headers: { ...init().headers, origin: "https://evil.example" } });
+    expect(bad.status).toBe(403);
+    const good = await fetch(url, { ...init(), headers: { ...init().headers, origin: "https://app.example" } });
+    expect(good.status).toBe(200);
   });
 
   it("answers 404 off the configured path and 400 for a body that is not an initialize", async () => {

@@ -83,6 +83,10 @@ SMOL_MCP_AUTH_TOKEN=$(openssl rand -hex 16) \
 - **It refuses to start without `SMOL_MCP_AUTH_TOKEN`**, and every request
   needs it. These tools create and run virtual machines, so a listener without
   a token is a remote shell.
+- **The token check runs before the path check**, so an unauthenticated
+  request learns nothing, not even where the endpoint is.
+- **DNS rebinding protection is on**, with the Host and Origin allow-lists
+  below.
 - The token is read from `authorization: Bearer ...` **or**
   `x-smol-mcp-token`. The second header is there for a deployment that puts
   something else in `authorization` before the request reaches this server.
@@ -135,6 +139,8 @@ dropping unknown fields is exactly the failure this avoids.
 | HTTP port | `SMOL_MCP_HTTP_PORT` | 8080 | HTTP transport only. What a smol machine publishes by default. |
 | HTTP path | `SMOL_MCP_HTTP_PATH` | `/mcp` | HTTP transport only. Everything else on the listener is a 404. |
 | HTTP token | `SMOL_MCP_AUTH_TOKEN` | none | HTTP transport only, and required: it refuses to start without one. |
+| HTTP Host allow-list | `SMOL_MCP_HTTP_ALLOWED_HOSTS` | the loopback names of the bound port | Comma separated. Off loopback the name is not knowable here, so name it or the Host check does nothing and the startup log says so. |
+| HTTP Origin allow-list | `SMOL_MCP_HTTP_ALLOWED_ORIGINS` | none | Comma separated. Empty means no browser origin is expected; a request carrying one is refused only when this names some other value. |
 
 ### Security defaults, stated as reasons
 
