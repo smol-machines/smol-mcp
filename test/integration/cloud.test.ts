@@ -96,9 +96,21 @@ suite("cloud lifecycle", () => {
     await assertUnderCeiling();
   });
 
-  it("refuses the two local-only tools rather than pretending", async () => {
-    await expect(m.backend.logs("anything", 10)).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
+  it("refuses pull-image rather than pretending, and reads the machine event log", async () => {
     await expect(m.backend.pullImage("anything", "alpine")).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
+    const name = unique("events");
+    await ops.createMachine(m, { name, image: CLOUD_IMAGE, ...SMALL, network: "blocked", start: false });
+    try {
+      const page = await m.backend.logs(name, { tail: 10 });
+      // The control plane records a creation, so the log is never empty here,
+      // and the cursor it hands back is what a follower resumes from.
+      expect(page.lines.length).toBeGreaterThan(0);
+      expect(page.cursor).toMatch(/^e:/);
+      expect((await m.backend.logs(name, { tail: 10, cursor: page.cursor })).lines).toEqual([]);
+    } finally {
+      await m.backend.deleteMachine(name);
+    }
+    await assertUnderCeiling();
   });
 });
 

@@ -137,8 +137,22 @@ describe("LocalClient parsing", () => {
 
   it("parses SSE log lines and asks for tail without follow", async () => {
     seen.length = 0;
-    expect(await client.logs("a", 5)).toEqual(['{"level":"INFO"}', "second"]);
+    expect(await client.logs("a", { tail: 5 })).toEqual({ lines: ['{"level":"INFO"}', "second"], cursor: "n:2", truncated: false });
     expect(seen[0]?.url).toBe("/api/v1/machines/a/logs?tail=5&follow=false");
+  });
+
+  it("resumes from a cursor by asking for the whole log and dropping what it has seen", async () => {
+    // The route takes no since and issues no ids, so an offset counted from
+    // the start is the only thing that means the same on the next call. A
+    // tailed fetch would make it an offset into a window that moves.
+    seen.length = 0;
+    expect(await client.logs("a", { tail: 5, cursor: "n:1" })).toEqual({ lines: ["second"], cursor: "n:2", truncated: false });
+    expect(seen[0]?.url).toBe("/api/v1/machines/a/logs?tail=0&follow=false");
+    // A log shorter than the cursor was rotated; resuming into it would skip
+    // the beginning of the new one.
+    expect((await client.logs("a", { tail: 5, cursor: "n:99" })).lines).toHaveLength(2);
+    // A cursor from the other target is not one this client can resume from.
+    expect((await client.logs("a", { tail: 5, cursor: "e:ev-3" })).cursor).toBe("n:2");
   });
 
   it("parses the pull response", async () => {

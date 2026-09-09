@@ -107,6 +107,30 @@ export interface CallCtx {
   signal?: AbortSignal | undefined;
 }
 
+export interface LogOptions {
+  // Lines from the end, when there is no cursor.
+  tail: number;
+  // The caller's abort, carried in the options rather than beside them. A log
+  // follow is the one call that already has an options object, and two
+  // branches each claiming the next positional parameter is what made this a
+  // collision rather than an addition.
+  ctx?: CallCtx | undefined;
+  // Where the last page ended. Opaque, and issued by the target that will be
+  // asked to resume from it: neither log route takes a "since", so the two
+  // targets resume by different means and neither cursor means anything to
+  // the other.
+  cursor?: string | undefined;
+}
+
+export interface LogPage {
+  lines: string[];
+  // Pass this back to get what has arrived since. Always present, so a
+  // follower never has to guess whether it can resume.
+  cursor: string;
+  // Set when lines were dropped to stay inside the output budget.
+  truncated: boolean;
+}
+
 export interface MachineBackend {
   readonly target: "local" | "cloud";
   listMachines(ctx?: CallCtx): Promise<MachineView[]>;
@@ -120,7 +144,7 @@ export interface MachineBackend {
   exec(name: string, req: ExecOptions, clientTimeoutMs?: number, ctx?: CallCtx): Promise<ExecResult>;
   readFile(name: string, path: string, ctx?: CallCtx): Promise<Buffer>;
   writeFile(name: string, path: string, content: Buffer, ctx?: CallCtx): Promise<{ path: string; size: number }>;
-  logs(name: string, tail: number, ctx?: CallCtx): Promise<string[]>;
+  logs(name: string, opts: LogOptions): Promise<LogPage>;
   pullImage(name: string, image: string, ctx?: CallCtx): Promise<ImageInfo>;
 }
 

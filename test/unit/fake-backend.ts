@@ -2,7 +2,7 @@
 // can assert ordering (upload after readiness, delete after timeout).
 import type { ImageInfo } from "../../src/api.js";
 import { BackendError } from "../../src/backend.js";
-import type { CallCtx, CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView } from "../../src/backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView } from "../../src/backend.js";
 import { ConfigSchema } from "../../src/config.js";
 import type { Config } from "../../src/config.js";
 
@@ -75,9 +75,13 @@ export class FakeBackend implements MachineBackend {
     this.files.set(`${name}:${path}`, content);
     return { path, size: content.length };
   }
-  async logs(name: string, tail: number) {
-    this.calls.push({ op: "logs", name, args: tail });
-    return ["line1", "line2"];
+  // Every line ever written, so a cursor test can add more between calls.
+  logLines: string[] = ["line1", "line2"];
+  async logs(name: string, opts: LogOptions): Promise<LogPage> {
+    this.calls.push({ op: "logs", name, args: opts });
+    const seen = opts.cursor === undefined ? undefined : Number(opts.cursor);
+    const lines = seen === undefined ? this.logLines.slice(-opts.tail) : this.logLines.slice(seen);
+    return { lines, cursor: String(this.logLines.length), truncated: false };
   }
   async pullImage(name: string, image: string): Promise<ImageInfo> {
     this.calls.push({ op: "pull", name, args: image });

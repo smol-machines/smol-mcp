@@ -8,7 +8,7 @@ import { FakeBackend, testConfig } from "./fake-backend.js";
 // name their own.
 const SESSION = "session-under-test";
 import { StateFile } from "../../src/local/state.js";
-import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, networkPolicy, readFile, runCommand, runCommandOnMachine, runOnce, startMachine, waitReady, writeFile } from "../../src/machines.js";
+import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, logs, networkPolicy, readFile, runCommand, runCommandOnMachine, runOnce, startMachine, waitReady, writeFile } from "../../src/machines.js";
 
 describe("waitReady", () => {
   it("returns once an exec echoes the nonce, and counts the attempts", async () => {
@@ -369,5 +369,31 @@ describe("output too big for one result", () => {
     expect(r.truncated).toBe(true);
     expect(r.overflow).toEqual([]);
     expect(b.calls.some((c) => c.op === "write")).toBe(false);
+  });
+});
+
+describe("a page of a machine's log", () => {
+  it("stays inside the output budget and keeps the newest lines", async () => {
+    // machine-logs used to return whatever came back, and on the HTTP
+    // transport that is one JSON reply carrying the whole console.
+    const b = new FakeBackend();
+    b.logLines = ["a".repeat(30), "b".repeat(30), "c".repeat(30)];
+    const page = await logs({ backend: b, cfg: testConfig({ maxOutputBytes: 70 }), state: undefined, session: SESSION }, "m", {});
+    expect(page.lines).toEqual(["b".repeat(30), "c".repeat(30)]);
+    expect(page.truncated).toBe(true);
+  });
+
+  it("takes the tail from config and passes a cursor straight through", async () => {
+    const b = new FakeBackend();
+    b.logLines = ["1", "2", "3", "4"];
+    const m = { backend: b, cfg: testConfig({ logsTail: 2 }), state: undefined, session: SESSION };
+    expect((await logs(m, "m", {})).lines).toEqual(["3", "4"]);
+    expect(b.calls.at(-1)?.args).toEqual({ tail: 2, ctx: {} });
+    const page = await logs(m, "m", { cursor: "2" });
+    expect(page.lines).toEqual(["3", "4"]);
+    expect(page.cursor).toBe("4");
+    // Nothing new since: an empty page and the same cursor, which is what a
+    // follower needs to tell "quiet" from "start again".
+    expect((await logs(m, "m", { cursor: page.cursor })).lines).toEqual([]);
   });
 });

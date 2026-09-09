@@ -100,7 +100,12 @@ export function toolInputs(mode: TargetMode) {
     },
     "stop-machine": { ...target, name },
     "delete-machine": { ...target, name },
-    "machine-logs": { ...target, name, tail: z.number().int().positive().optional() },
+    "machine-logs": {
+      ...target,
+      name,
+      tail: z.number().int().positive().optional().describe("Lines from the end. Ignored when a cursor is given."),
+      cursor: z.string().optional().describe("The cursor from a previous call on the same machine and target. Returns only what has arrived since."),
+    },
     "pull-image": { ...target, name, image: z.string().min(1) },
   } as const;
 }
@@ -140,6 +145,6 @@ export const toolDescriptions: Record<ToolName, string> = {
   "start-machine": "Start a stopped machine and wait until commands run in it. This is the way back from stop-machine: create-machine on an existing name is a conflict on both targets.",
   "stop-machine": "Stop a running machine. start-machine starts it again.",
   "delete-machine": "Delete a machine, running or not.",
-  "machine-logs": "Tail a machine's log. On local that is the guest console; on cloud it is the machine's event log from the control plane, which records what happened to the machine rather than what ran inside it.",
+  "machine-logs": "Tail a machine's log, or follow it by passing back the cursor from the last call. On local that is the guest console; on cloud it is the machine's event log from the control plane, which records what happened to the machine rather than what ran inside it.",
   "pull-image": "Pull an image into a running machine's local cache. Local only.",
 };

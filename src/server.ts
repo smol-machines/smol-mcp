@@ -262,9 +262,9 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
-  registered["machine-logs"] = server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], inputSchema: inputs["machine-logs"], outputSchema: { lines: z.array(z.string()) } }, async (a, extra) => {
+  registered["machine-logs"] = server.registerTool("machine-logs", { description: toolDescriptions["machine-logs"], inputSchema: inputs["machine-logs"], outputSchema: { lines: z.array(z.string()), cursor: z.string(), truncated: z.boolean() } }, async (a, extra) => {
     try {
-      return ok({ lines: await (await pick(a.target)).backend.logs(a.name, a.tail ?? cfg.logsTail, ctxOf(extra)) });
+      return ok({ ...(await ops.logs(await pick(a.target), a.name, a, ctxOf(extra))) });
     } catch (err) {
       return fail(err);
     }

@@ -1,6 +1,6 @@
 // Orchestration above a backend: readiness, ephemeral naming, run-once.
 import { randomBytes } from "node:crypto";
-import type { CallCtx, MachineBackend, MachineView, MountSpec, NetworkPolicy, PortSpec } from "./backend.js";
+import type { CallCtx, LogPage, MachineBackend, MachineView, MountSpec, NetworkPolicy, PortSpec } from "./backend.js";
 import { BackendError } from "./backend.js";
 import type { Config } from "./config.js";
 import { noteOverflow, shapeResult, toArgv } from "./output.js";
@@ -308,6 +308,22 @@ export async function readFile(m: Machines, name: string, path: string, args: Re
   const length = Math.min(args.length ?? m.cfg.maxOutputBytes, whole.length - offset);
   const content = whole.subarray(offset, offset + length);
   return { content, size: whole.length, offset, eof: offset + length >= whole.length, startedMachine };
+}
+
+// A page of a machine's log, bounded by the same output budget every other
+// tool result is. machine-logs used to return whatever came back, which on
+// one transport is a single JSON reply carrying the whole console.
+export async function logs(m: Machines, name: string, opts: { tail?: number | undefined; cursor?: string | undefined }, ctx: CallCtx = {}): Promise<LogPage> {
+  const page = await m.backend.logs(name, { tail: opts.tail ?? m.cfg.logsTail, ...(opts.cursor !== undefined ? { cursor: opts.cursor } : {}), ctx });
+  let bytes = 0;
+  const kept: string[] = [];
+  // Keep the newest lines: a follower asked for what just happened.
+  for (const line of [...page.lines].reverse()) {
+    bytes += Buffer.byteLength(line, "utf8") + 1;
+    if (bytes > m.cfg.maxOutputBytes) break;
+    kept.unshift(line);
+  }
+  return { ...page, lines: kept, truncated: kept.length < page.lines.length };
 }
 
 export async function writeFile(m: Machines, name: string, path: string, content: Buffer, ctx: CallCtx = {}) {

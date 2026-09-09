@@ -13,7 +13,7 @@ import {
 } from "../api.js";
 import type { CreateMachineRequest, ExecRequest, ImageInfo, MachineInfo } from "../api.js";
 import { BackendError } from "../backend.js";
-import type { CallCtx, CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
 import { httpCall, parseEndpoint } from "../http.js";
 import type { Endpoint, HttpResponse } from "../http.js";
 
@@ -75,6 +75,13 @@ function parseBody<T>(res: HttpResponse, schema: ZodType<T>, what: string): T {
     throw new BackendError(`${what}: unexpected response shape: ${result.error.message}`, "BAD_RESPONSE");
   }
   return result.data;
+}
+
+// A cursor this client issued, or nothing when it came from the other target.
+function cursorCount(cursor: string | undefined): number | undefined {
+  if (cursor === undefined || !cursor.startsWith("n:")) return undefined;
+  const n = Number(cursor.slice(2));
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
 export function parseSseData(text: string): string[] {
@@ -195,11 +202,25 @@ export class LocalClient implements MachineBackend {
     return parseBody(res, FileUploadResponseSchema, `write ${path} in ${name}`);
   }
 
-  async logs(name: string, tail: number, ctx: CallCtx = {}): Promise<string[]> {
+  // The route takes a tail and nothing else: no since, no ids. So a caller
+  // resuming from a cursor asks for the whole log (tail=0) and the lines it
+  // has already seen are dropped here, counted from the start. That costs the
+  // whole log on each poll, and it is what makes the count mean the same
+  // thing on the next call; a cursor derived from a tailed fetch would be an
+  // offset into a window that moves.
+  async logs(name: string, opts: LogOptions): Promise<LogPage> {
+    const ctx = opts.ctx ?? {};
+    const seen = cursorCount(opts.cursor);
+    const tail = seen === undefined ? opts.tail : 0;
     // Without follow the stream ends after the tail; the timeout is the backstop.
     const res = await this.call("GET", `${API}/machines/${encodeURIComponent(name)}/logs?tail=${tail}&follow=false`, { timeoutMs: 15_000, signal: ctx.signal });
     if (res.status !== 200) throw apiError(res, `logs of ${name}`);
-    return parseSseData(res.body.toString("utf8"));
+    const all = parseSseData(res.body.toString("utf8"));
+    if (seen === undefined) return { lines: all, cursor: `n:${all.length}`, truncated: false };
+    // A log shorter than the cursor was rotated or replaced; resuming from an
+    // offset into it would skip the beginning of the new one.
+    const lines = all.length < seen ? all : all.slice(seen);
+    return { lines, cursor: `n:${all.length}`, truncated: false };
   }
 
   async pullImage(name: string, image: string, ctx: CallCtx = {}): Promise<ImageInfo> {

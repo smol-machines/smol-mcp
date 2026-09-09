@@ -283,9 +283,22 @@ describe("CloudClient", () => {
     // API publishes in place of a console log, and it takes no tail of its
     // own, so the last lines are taken here.
     seen.length = 0;
-    const lines = await client.logs(ID, 2);
+    const page = await client.logs(ID, { tail: 2 });
     expect(seen.map((s) => s.url)).toEqual([`/v1/machines/${ID}/events`]);
-    expect(lines).toEqual(["2026-09-08T14:47:38Z INFO machine started", "2026-09-08T14:48:02Z WARN egress denied"]);
+    expect(page.lines).toEqual(["2026-09-08T14:47:38Z INFO machine started", "2026-09-08T14:48:02Z WARN egress denied"]);
+    expect(page.cursor).toBe("e:ev-3");
+  });
+
+  it("resumes from the event id it handed out, and starts over when that event is gone", async () => {
+    expect((await client.logs(ID, { tail: 2, cursor: "e:ev-1" })).lines).toEqual([
+      "2026-09-08T14:47:38Z INFO machine started",
+      "2026-09-08T14:48:02Z WARN egress denied",
+    ]);
+    expect((await client.logs(ID, { tail: 2, cursor: "e:ev-3" })).lines).toEqual([]);
+    // An id the log has rolled past, or one from the other target, is not a
+    // position in this log; the page falls back to the tail.
+    expect((await client.logs(ID, { tail: 1, cursor: "e:ev-gone" })).lines).toHaveLength(1);
+    expect((await client.logs(ID, { tail: 1, cursor: "n:2" })).lines).toHaveLength(1);
   });
 
   it("refuses pull-image by name, which the control plane does at create", async () => {

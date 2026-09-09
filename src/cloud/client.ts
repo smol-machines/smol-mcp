@@ -12,7 +12,7 @@
 import { z } from "zod";
 import type { ImageInfo } from "../api.js";
 import { BackendError } from "../backend.js";
-import type { CallCtx, CreateOptions, ExecOptions, ExecResult, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
+import type { CallCtx, CreateOptions, ExecOptions, ExecResult, LogOptions, LogPage, MachineBackend, MachineView, NetworkPolicy } from "../backend.js";
 
 export const CloudNetworkSchema = z.looseObject({ mode: z.string(), cidrs: z.array(z.string()).nullish() });
 
@@ -410,12 +410,19 @@ export class CloudClient implements MachineBackend {
     return { path, size: content.length };
   }
 
-  async logs(nameOrId: string, tail: number): Promise<string[]> {
-    const id = await this.resolve(nameOrId);
+  // The cursor here is the id of the last event handed out. The route takes
+  // neither a tail nor a since, so the whole log arrives and both are applied
+  // here; an id that is no longer in the log means the log rolled past it, so
+  // the page starts again from the tail rather than silently returning
+  // everything.
+  async logs(nameOrId: string, opts: LogOptions): Promise<LogPage> {
+    const ctx = opts.ctx ?? {};
+    const id = await this.resolve(nameOrId, ctx);
     const events = await this.call("GET", `/v1/machines/${encodeURIComponent(id)}/events`, z.array(CloudEventSchema), { timeoutMs: 30_000 });
-    // The route takes no tail of its own, so the whole log arrives and the
-    // last lines are taken here.
-    return events.slice(-tail).map(formatEvent);
+    const after = opts.cursor === undefined ? -1 : events.findIndex((e) => e.id === cursorId(opts.cursor));
+    const fresh = after >= 0 ? events.slice(after + 1) : events.slice(-opts.tail);
+    const last = events.at(-1);
+    return { lines: fresh.map(formatEvent), cursor: last === undefined ? (opts.cursor ?? "") : `e:${last.id}`, truncated: false };
   }
 
   async pullImage(): Promise<ImageInfo> {
@@ -439,6 +446,11 @@ export function findMicros(text: string): number | undefined {
     return undefined;
   }
   return undefined;
+}
+
+// A cursor this client issued, or nothing when it came from the other target.
+function cursorId(cursor: string | undefined): string | undefined {
+  return cursor !== undefined && cursor.startsWith("e:") ? cursor.slice(2) : undefined;
 }
 
 // One event, in the shape a console log line has: when, how loud, what.
