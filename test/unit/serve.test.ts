@@ -6,7 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../../src/server.js";
-import { localUnavailable } from "../../src/local/serve.js";
+import { localUnavailable, serveEnv } from "../../src/local/serve.js";
 import type { HostChecks, ServeHandle } from "../../src/local/serve.js";
 import { ServePool } from "../../src/local/pool.js";
 import { testConfig } from "./fake-backend.js";
@@ -124,5 +124,26 @@ describe("the shared serve, by reference count", () => {
     await expect(pool.acquire("k", failing)).rejects.toThrow(/no hypervisor/);
     expect(attempts).toBe(2);
     expect(pool.refs("k")).toBe(0);
+  });
+});
+
+describe("the environment the serve child gets", () => {
+  it("carries what a hypervisor needs and neither token", () => {
+    // The child used to get process.env whole, so a hypervisor that reads
+    // neither of them held the cloud account key and this server's own HTTP
+    // token in its environment for as long as it ran.
+    const env = serveEnv({
+      PATH: "/usr/bin",
+      HOME: "/home/a",
+      SMOLVM_LOG: "debug",
+      SMOL_CLOUD_TOKEN: "the-cloud-account-key",
+      SMOL_MCP_AUTH_TOKEN: "the-http-token",
+      AWS_SECRET_ACCESS_KEY: "something-else-entirely",
+    });
+    expect(env).toEqual({ PATH: "/usr/bin", HOME: "/home/a", SMOLVM_LOG: "debug" });
+  });
+
+  it("is an allow-list, so a new secret does not travel by default", () => {
+    expect(serveEnv({ PATH: "/usr/bin", A_NEW_TOKEN_NOBODY_LISTED: "x" })).toEqual({ PATH: "/usr/bin" });
   });
 });

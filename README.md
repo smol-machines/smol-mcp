@@ -153,8 +153,10 @@ dropping unknown fields is exactly the failure this avoids.
 - **Nothing runs on the host outside a VM.** Every command a tool executes
   goes through the machine API into a guest. The server spawns exactly one
   host process, `smolvm serve`, and only when a local tool is called.
-- **The token is read from the environment and never written anywhere.** It is
-  not logged, not echoed in an error, and `.env` is in `.gitignore`.
+- **The token is read from the environment or the config file, and never
+  written anywhere.** It is not logged, not echoed in an error, `.env` is in
+  `.gitignore`, and the `smolvm serve` child is spawned with a minimal
+  environment that carries neither token.
 - **`run-once` on cloud denies egress by default**, and never publishes a port.
   See the network section.
 - **The HTTP transport authenticates every request and refuses to start

@@ -4,7 +4,7 @@
 // guest rollout ingress), so a failed spawn names that cause.
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { accessSync, constants, createWriteStream, existsSync, rmSync } from "node:fs";
+import { accessSync, constants, createWriteStream, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { BackendError } from "../backend.js";
 import type { Config } from "../config.js";
@@ -83,15 +83,79 @@ export function serveKey(cfg: Config): string {
   return `${cfg.smolvm}|${cfg.localUrl}|${cfg.runtimeDir}`;
 }
 
+// The environment a hypervisor needs, and nothing else. An allow-list rather
+// than a deny-list: a new secret in this process's environment must not reach
+// the child by default just because nobody thought to name it here.
+const SERVE_ENV_KEYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TZ", "TMPDIR", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"];
+
+export function serveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const key of SERVE_ENV_KEYS) {
+    const value = env[key];
+    if (value !== undefined) out[key] = value;
+  }
+  // The binary's own settings travel; the tokens this server holds do not,
+  // and neither does anything else that happens to be in the environment.
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith("SMOLVM_") && value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+interface ServePid {
+  pid: number;
+  url: string;
+}
+
+function readPidFile(path: string): ServePid | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const rec = parsed as Record<string, unknown>;
+    if (typeof rec.pid !== "number" || typeof rec.url !== "string") return undefined;
+    return { pid: rec.pid, url: rec.url };
+  } catch {
+    return undefined;
+  }
+}
+
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 export async function ensureServe(cfg: Config, log: (msg: string) => void): Promise<ServeHandle> {
   ensureRuntimeDir(cfg.runtimeDir);
 
+  // A serve left behind by an instance of this server that crashed is one to
+  // reclaim, not one to leave running for the rest of the login session. The
+  // pid file says which is which; a serve somebody else started is still
+  // adopted read-only and left alone.
+  const orphan = readPidFile(join(cfg.runtimeDir, "serve.pid"));
   for (const url of candidateUrls(cfg)) {
     const version = await probe(url);
-    if (version !== undefined) {
-      log(`using existing smolvm serve ${version} at ${url}`);
-      return { client: new LocalClient(url), url, owned: false, version, stop: async () => {} };
-    }
+    if (version === undefined) continue;
+    const reclaimed = orphan !== undefined && orphan.url === url && pidAlive(orphan.pid);
+    log(reclaimed ? `reclaiming the smolvm serve ${version} an earlier instance left at ${url} (pid ${orphan?.pid})` : `using existing smolvm serve ${version} at ${url}`);
+    if (!reclaimed) return { client: new LocalClient(url), url, owned: false, version, stop: async () => {} };
+    const pid = orphan.pid;
+    return {
+      client: new LocalClient(url),
+      url,
+      owned: true,
+      version,
+      stop: async () => {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          // Already gone, which is the outcome this was asking for.
+        }
+        rmSync(join(cfg.runtimeDir, "serve.pid"), { force: true });
+      },
+    };
   }
 
   // Nothing is listening, so this host has to run the serve itself.
@@ -106,11 +170,15 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
   if (url.startsWith("unix://")) rmSync(url.slice("unix://".length), { force: true });
 
   const logPath = join(cfg.runtimeDir, "serve.log");
+  const pidPath = join(cfg.runtimeDir, "serve.pid");
   const logStream = createWriteStream(logPath, { flags: "a" });
   let stderrTail = "";
   const child: ChildProcess = spawn(cfg.smolvm, ["serve", "start", "--listen", listen], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
+    // A minimal environment, because this child is a hypervisor and has no
+    // use for either token: with the whole environment it carried both in a
+    // process that never reads them, and a process environment is readable.
+    env: serveEnv(process.env),
   });
   child.stdout?.on("data", (c: Buffer) => logStream.write(c));
   child.stderr?.on("data", (c: Buffer) => {
@@ -150,6 +218,9 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
     const what = exited !== undefined ? `exited (code ${exited.code}, signal ${exited.signal}) without answering /health` : `did not answer /health within ${cfg.serveStartTimeoutSecs} s`;
     throw new Error(`smolvm serve ${what} (${cfg.smolvm} serve start --listen ${listen}).${hint} stderr: ${stderrTail.trim()}`);
   }
+  // Who started this one, so a restart after a crash can tell a serve it
+  // owns from one that was already here.
+  if (child.pid !== undefined) writeFileSync(pidPath, JSON.stringify({ pid: child.pid, url, startedAt: Date.now() }, null, 2), { mode: 0o600 });
   log(`started smolvm serve ${version} (pid ${child.pid}) at ${url}`);
 
   const stop = async () => {
@@ -158,6 +229,7 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
     await Promise.race([exitPromise, sleep(10_000)]);
     if (exited === undefined) child.kill("SIGKILL");
     await Promise.race([exitPromise, sleep(2_000)]);
+    rmSync(pidPath, { force: true });
     logStream.end();
   };
   return { client: new LocalClient(url), url, owned: true, version, stop };
