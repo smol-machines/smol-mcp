@@ -103,7 +103,12 @@ export function serveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 interface ServePid {
+  // The serve child.
   pid: number;
+  // The server process that started it. This is the half that decides whether
+  // the serve is an orphan: a serve whose starter is still running belongs to
+  // that starter, however many other instances find it listening.
+  owner: number;
   url: string;
 }
 
@@ -112,10 +117,22 @@ function readPidFile(path: string): ServePid | undefined {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     const rec = parsed as Record<string, unknown>;
     if (typeof rec.pid !== "number" || typeof rec.url !== "string") return undefined;
-    return { pid: rec.pid, url: rec.url };
+    // A file written before the owner was recorded cannot prove an orphan, so
+    // it is read as "somebody else's".
+    if (typeof rec.owner !== "number") return undefined;
+    return { pid: rec.pid, owner: rec.owner, url: rec.url };
   } catch {
     return undefined;
   }
+}
+
+// An orphan is a serve that is still listening and whose starter is not. A
+// serve started by a process that is still alive is in use, even when this
+// process also wants it: taking it over would stop it under the other one,
+// which is what a real run showed.
+export function isOrphan(pid: ServePid | undefined, url: string, alive: (pid: number) => boolean = pidAlive): boolean {
+  if (pid === undefined || pid.url !== url) return false;
+  return alive(pid.pid) && !alive(pid.owner);
 }
 
 export function pidAlive(pid: number): boolean {
@@ -138,9 +155,9 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
   for (const url of candidateUrls(cfg)) {
     const version = await probe(url);
     if (version === undefined) continue;
-    const reclaimed = orphan !== undefined && orphan.url === url && pidAlive(orphan.pid);
+    const reclaimed = isOrphan(orphan, url);
     log(reclaimed ? `reclaiming the smolvm serve ${version} an earlier instance left at ${url} (pid ${orphan?.pid})` : `using existing smolvm serve ${version} at ${url}`);
-    if (!reclaimed) return { client: new LocalClient(url), url, owned: false, version, stop: async () => {} };
+    if (!reclaimed || orphan === undefined) return { client: new LocalClient(url), url, owned: false, version, stop: async () => {} };
     const pid = orphan.pid;
     return {
       client: new LocalClient(url),
@@ -220,7 +237,7 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
   }
   // Who started this one, so a restart after a crash can tell a serve it
   // owns from one that was already here.
-  if (child.pid !== undefined) writeFileSync(pidPath, JSON.stringify({ pid: child.pid, url, startedAt: Date.now() }, null, 2), { mode: 0o600 });
+  if (child.pid !== undefined) writeFileSync(pidPath, JSON.stringify({ pid: child.pid, owner: process.pid, url, startedAt: Date.now() }, null, 2), { mode: 0o600 });
   log(`started smolvm serve ${version} (pid ${child.pid}) at ${url}`);
 
   const stop = async () => {

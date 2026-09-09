@@ -49,7 +49,21 @@ suite("stdio EOF", () => {
     try {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual(
-        ["create-machine", "delete-machine", "get-machine", "list-machines", "machine-logs", "pull-image", "read-file", "run-command", "run-once", "stop-machine", "write-file"].sort(),
+        [
+          "branch-machine",
+          "create-machine",
+          "delete-machine",
+          "get-machine",
+          "list-machines",
+          "machine-logs",
+          "pull-image",
+          "read-file",
+          "run-command",
+          "run-once",
+          "start-machine",
+          "stop-machine",
+          "write-file",
+        ].sort(),
       );
       const listed = structured<{ machines: unknown[] }>(await client.callTool({ name: "list-machines", arguments: { target: "local" } }));
       expect(Array.isArray(listed.machines)).toBe(true);
@@ -61,7 +75,7 @@ suite("stdio EOF", () => {
   it("deletes the machines it created when stdin closes, and leaves a serve it did not start", async () => {
     const { client, transport } = await connect();
     const created = structured<{ machine: { name: string }; ephemeral: boolean }>(
-      await client.callTool({ name: "create-machine", arguments: { target: "local", image: IMAGE } }),
+      await client.callTool({ name: "create-machine", arguments: { target: "local", image: IMAGE, network: "open" } }),
     );
     expect(created.ephemeral).toBe(true);
     expect(created.machine.name.startsWith("mcp-")).toBe(true);

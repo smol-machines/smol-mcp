@@ -6,7 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../../src/server.js";
-import { localUnavailable, serveEnv } from "../../src/local/serve.js";
+import { isOrphan, localUnavailable, serveEnv } from "../../src/local/serve.js";
 import type { HostChecks, ServeHandle } from "../../src/local/serve.js";
 import { ServePool } from "../../src/local/pool.js";
 import { testConfig } from "./fake-backend.js";
@@ -145,5 +145,27 @@ describe("the environment the serve child gets", () => {
 
   it("is an allow-list, so a new secret does not travel by default", () => {
     expect(serveEnv({ PATH: "/usr/bin", A_NEW_TOKEN_NOBODY_LISTED: "x" })).toEqual({ PATH: "/usr/bin" });
+  });
+});
+
+describe("what counts as an orphaned serve", () => {
+  const url = "unix:///tmp/x/api.sock";
+  const alive = (pids: number[]) => (pid: number) => pids.includes(pid);
+
+  it("is a listening serve whose starter is gone", () => {
+    expect(isOrphan({ pid: 10, owner: 11, url }, url, alive([10]))).toBe(true);
+  });
+
+  it("is not a serve another live process started", () => {
+    // Found by a real run: reclaiming this one stopped the serve under the
+    // instance that was still using it, and its next call was ENOENT on the
+    // socket.
+    expect(isOrphan({ pid: 10, owner: 11, url }, url, alive([10, 11]))).toBe(false);
+  });
+
+  it("is not a dead serve, and not one recorded for another address", () => {
+    expect(isOrphan({ pid: 10, owner: 11, url }, url, alive([11]))).toBe(false);
+    expect(isOrphan({ pid: 10, owner: 11, url: "unix:///tmp/other.sock" }, url, alive([10]))).toBe(false);
+    expect(isOrphan(undefined, url, alive([10]))).toBe(false);
   });
 });
