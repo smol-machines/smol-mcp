@@ -81,9 +81,9 @@ beforeAll(async () => {
         return send(
           200,
           JSON.stringify([
-            { id: "ev-1", level: "info", message: "machine created", createdAt: "2026-09-08T14:47:37Z" },
-            { id: "ev-2", level: "info", message: "machine started", createdAt: "2026-09-08T14:47:38Z" },
             { id: "ev-3", level: "warn", message: "egress denied", createdAt: "2026-09-08T14:48:02Z" },
+            { id: "ev-2", level: "info", message: "machine started", createdAt: "2026-09-08T14:47:38Z" },
+            { id: "ev-1", level: "info", message: "machine created", createdAt: "2026-09-08T14:47:37Z" },
           ]),
         );
       }
@@ -324,7 +324,7 @@ describe("CloudClient", () => {
     filesRouteServed = true;
   });
 
-  it("reads the machine's event log and keeps the last lines of it", async () => {
+  it("reads the machine's event log oldest first, however the route ordered it", async () => {
     // The tool used to refuse on this target. The events route is what the
     // API publishes in place of a console log, and it takes no tail of its
     // own, so the last lines are taken here.
@@ -332,6 +332,20 @@ describe("CloudClient", () => {
     const page = await client.logs(ID, { tail: 2 });
     expect(seen.map((s) => s.url)).toEqual([`/v1/machines/${ID}/events`]);
     expect(page.lines).toEqual(["2026-09-08T14:47:38Z INFO machine started", "2026-09-08T14:48:02Z WARN egress denied"]);
+    expect(page.cursor).toBe("e:ev-3");
+  });
+
+  it("takes the cursor from the newest event, so a follower advances", async () => {
+    // The route answers newest first. Taking the last element as the newest
+    // put the cursor on the oldest event, and every later page came back
+    // empty: a follower would have seen nothing arrive, ever. Only a real
+    // call showed it, because the fixture used to be sorted the other way.
+    const page = await client.logs(ID, { tail: 5 });
+    expect(page.lines).toEqual([
+      "2026-09-08T14:47:37Z INFO machine created",
+      "2026-09-08T14:47:38Z INFO machine started",
+      "2026-09-08T14:48:02Z WARN egress denied",
+    ]);
     expect(page.cursor).toBe("e:ev-3");
   });
 

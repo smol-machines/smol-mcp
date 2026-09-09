@@ -433,7 +433,14 @@ export class CloudClient implements MachineBackend {
   async logs(nameOrId: string, opts: LogOptions): Promise<LogPage> {
     const ctx = opts.ctx ?? {};
     const id = await this.resolve(nameOrId, ctx);
-    const events = await this.call("GET", `/v1/machines/${encodeURIComponent(id)}/events`, z.array(CloudEventSchema), { timeoutMs: 30_000 });
+    const answered = await this.call("GET", `/v1/machines/${encodeURIComponent(id)}/events`, z.array(CloudEventSchema), { timeoutMs: 30_000 });
+    // The route answers newest first. Everything below reads a log the way a
+    // console log reads, oldest first, and a cursor taken from the wrong end
+    // is a cursor that never advances: the id of what this call thought was
+    // the newest event was actually the oldest, so the next page was always
+    // empty and a follower saw nothing arrive. Sort rather than reverse,
+    // because the order is the route's choice and not a promise.
+    const events = [...answered].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
     const after = opts.cursor === undefined ? -1 : events.findIndex((e) => e.id === cursorId(opts.cursor));
     const fresh = after >= 0 ? events.slice(after + 1) : events.slice(-opts.tail);
     const last = events.at(-1);
