@@ -210,6 +210,27 @@ describe("http transport", () => {
     await transport.close();
   });
 
+  it("hands back a readable link to a command's full output, alongside the path in the text", async () => {
+    const { backend, url } = await start({ maxOutputBytes: 100 });
+    backend.execImpl = async () => ({ exitCode: 0, stdout: "L".repeat(5000), stderr: "" });
+    const { client, transport } = await connect(url);
+    const res = await client.callTool({ name: "run-command", arguments: { target: "local", name: "m", command: ["noisy"] } });
+    const structured = res.structuredContent as { overflow: { path: string; bytes: number }[] };
+    expect(structured.overflow).toHaveLength(1);
+
+    const content = res.content as { type: string; uri?: string; text?: string }[];
+    const link = content.find((c) => c.type === "resource_link");
+    expect(link?.uri).toBe(`smol://machine/local/m/file${String(structured.overflow[0]?.path)}`);
+    // A client that ignores an unknown content block still has the path, so
+    // the link is never the only place the fact appears.
+    expect(content.find((c) => c.type === "text")?.text).toContain(structured.overflow[0]?.path);
+
+    // And the link resolves through this same server.
+    const read = await client.readResource({ uri: String(link?.uri) });
+    expect(readText(read)).toHaveLength(5000);
+    await transport.close();
+  });
+
   it("deletes the session's ephemeral machines when the session is terminated", async () => {
     const { backend, url } = await start();
     const { client, transport } = await connect(url);

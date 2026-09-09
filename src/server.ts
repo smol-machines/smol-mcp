@@ -1,6 +1,6 @@
 // Builds the McpServer, wires the two backends, and runs cleanup on close.
 import { randomUUID } from "node:crypto";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -16,6 +16,8 @@ import { serves } from "./local/pool.js";
 import type { ServeHandle } from "./local/serve.js";
 import * as ops from "./machines.js";
 import type { Machines } from "./machines.js";
+import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
+import type { Overflow } from "./output.js";
 import { TARGETS_URI, serverInstructions, targetInfos } from "./targets.js";
 import { commandResultOutput, machineOutput, toolDescriptions, toolInputs } from "./tools.js";
 import type { ToolName } from "./tools.js";
@@ -33,8 +35,25 @@ export interface SmolMcp {
   shutdown(): Promise<{ deleted: string[]; failed: { name: string; error: string }[] }>;
 }
 
-function ok(structured: Record<string, unknown>): CallToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(structured, null, 2) }], structuredContent: structured };
+export const FILE_URI_TEMPLATE = "smol://machine/{target}/{name}/file{+path}";
+
+export function fileUri(target: string, name: string, path: string): string {
+  return new UriTemplate(FILE_URI_TEMPLATE).expand({ target, name, path });
+}
+
+// One link per spilled stream, alongside the text, never instead of it.
+function overflowLinks(target: string, name: string, overflow: Overflow[]): CallToolResult["content"] {
+  return overflow.map((o) => ({
+    type: "resource_link" as const,
+    uri: fileUri(target, name, o.path),
+    name: o.path,
+    mimeType: "text/plain",
+    description: `the whole ${o.stream} of this command, ${o.bytes} bytes, in machine ${name}`,
+  }));
+}
+
+function ok(structured: Record<string, unknown>, extra: CallToolResult["content"] = []): CallToolResult {
+  return { content: [{ type: "text", text: JSON.stringify(structured, null, 2) }, ...extra], structuredContent: structured };
 }
 
 function fail(err: unknown): CallToolResult {
@@ -140,6 +159,23 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     },
   );
 
+  // A file inside a machine, addressable. It exists so an oversized command
+  // result can hand back a link to the whole output rather than only a path
+  // in prose: a client that reads resources fetches it through this same
+  // server, and one that does not still has the path, which is why the link
+  // is never the only place the fact appears.
+  server.registerResource(
+    "machine-file",
+    new ResourceTemplate(FILE_URI_TEMPLATE, { list: undefined }),
+    { title: "A file inside a machine", description: "Read a file out of a machine on either target." },
+    async (uri, vars) => {
+      const target = String(vars.target) === "cloud" ? "cloud" : "local";
+      const path = String(vars.path);
+      const buf = await (await pick(target)).backend.readFile(String(vars.name), path);
+      return { contents: [{ uri: uri.href, mimeType: "application/octet-stream", text: buf.toString("utf8") }] };
+    },
+  );
+
   registered["list-machines"] = server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a, extra) => {
     try {
       const list = await (await pick(a.target)).backend.listMachines(ctxOf(extra));
@@ -168,7 +204,8 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
 
   registered["run-command"] = server.registerTool("run-command", { description: toolDescriptions["run-command"], inputSchema: inputs["run-command"], outputSchema: { ...commandResultOutput, startedMachine: z.boolean() } }, async (a, extra) => {
     try {
-      return ok({ ...(await ops.runCommandOnMachine(await pick(a.target), a.name, a, ctxOf(extra))) });
+      const r = await ops.runCommandOnMachine(await pick(a.target), a.name, a, ctxOf(extra));
+      return ok({ ...r }, overflowLinks(chooseTarget(a.target), a.name, r.overflow));
     } catch (err) {
       return fail(err);
     }
