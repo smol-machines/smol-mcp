@@ -30,6 +30,13 @@ async function start(over: Partial<Parameters<typeof testConfig>[0]> = {}) {
   return { backend, url: `http://127.0.0.1:${running.port}/mcp` };
 }
 
+// A resource content is text or a blob; every resource here is text.
+function readText(read: { contents: unknown[] }): string {
+  const first = read.contents[0] as { text?: unknown } | undefined;
+  if (first === undefined || typeof first.text !== "string") throw new Error("resource returned no text");
+  return first.text;
+}
+
 async function connect(url: string, token = TOKEN) {
   const client = new Client({ name: "smol-mcp-http-test", version: "0" });
   const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } });
@@ -99,6 +106,38 @@ describe("http transport", () => {
     const res = await b.client.callTool({ name: "list-machines", arguments: {} });
     expect(res.isError).toBe(true);
     await b.transport.close();
+  });
+
+  it("states the reachable targets in the instructions and in the targets resource", async () => {
+    const pair = await start({ cloudToken: "a-token" });
+    const { client, transport } = await connect(pair.url);
+    // Before this, an agent learned that two fleets existed only from one
+    // sentence on an argument description, and learned that one of them was
+    // unconfigured by calling it and reading the failure.
+    const instructions = client.getInstructions() ?? "";
+    expect(instructions).toMatch(/two fleets/);
+    expect(instructions).toMatch(/required `target`/);
+    expect(instructions).toMatch(/machine-logs is refused/);
+
+    const listed = (await client.listResources()).resources.map((r) => r.uri);
+    expect(listed).toContain("smol://targets");
+    const read = await client.readResource({ uri: "smol://targets" });
+    const body = JSON.parse(readText(read)) as { mode: string; targets: { target: string; served: boolean; unavailable: string | null; cannot: string[] }[] };
+    expect(body.mode).toBe("both");
+    expect(body.targets.map((x) => x.target)).toEqual(["local", "cloud"]);
+    expect(body.targets.every((x) => x.served)).toBe(true);
+    expect(body.targets.find((x) => x.target === "cloud")?.cannot.join(" ")).toMatch(/pull-image is refused/);
+    await transport.close();
+  });
+
+  it("says in the targets resource that an unconfigured cloud target is not usable", async () => {
+    const single = await start();
+    const { client, transport } = await connect(single.url);
+    const read = await client.readResource({ uri: "smol://targets" });
+    const body = JSON.parse(readText(read)) as { mode: string; targets: { target: string; served: boolean; unavailable: string | null }[] };
+    expect(body.mode).toBe("local");
+    expect(body.targets.find((x) => x.target === "cloud")).toMatchObject({ served: false, unavailable: "no SMOL_CLOUD_TOKEN is configured" });
+    await transport.close();
   });
 
   it("deletes the session's ephemeral machines when the session is terminated", async () => {

@@ -12,6 +12,7 @@ import { ensureServe } from "./local/serve.js";
 import type { ServeHandle } from "./local/serve.js";
 import * as ops from "./machines.js";
 import type { Machines } from "./machines.js";
+import { TARGETS_URI, serverInstructions, targetInfos } from "./targets.js";
 import { commandResultOutput, machineOutput, toolDescriptions, toolInputs } from "./tools.js";
 
 export const SERVER_VERSION = "0.1.0";
@@ -87,8 +88,24 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
   };
   const pick = async (target: "local" | "cloud" | undefined) => (chooseTarget(target) === "cloud" ? cloud : await local());
 
-  const server = new McpServer({ name: "smol-mcp", version: SERVER_VERSION });
+  // The instructions are the only place an agent learns which fleets this
+  // process reaches before it calls anything.
+  const server = new McpServer({ name: "smol-mcp", version: SERVER_VERSION }, { instructions: serverInstructions(mode, cfg) });
   const inputs = toolInputs(mode);
+
+  server.registerResource(
+    "targets",
+    TARGETS_URI,
+    {
+      title: "Targets this server reaches",
+      description: "Which fleets this process serves, whether each one is usable on this host, and what each cannot do.",
+      mimeType: "application/json",
+    },
+    (uri) => {
+      const body = { mode, targets: targetInfos(mode, cfg) };
+      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(body, null, 2) }] };
+    },
+  );
 
   server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a) => {
     try {
