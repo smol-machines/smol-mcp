@@ -36,6 +36,10 @@ export const CloudExecSchema = z.looseObject({
   stderrTruncated: z.boolean().nullish(),
 });
 
+// The machine event log: what the control plane did to the machine, not what
+// the guest wrote to its console. It is the only log this API publishes.
+export const CloudEventSchema = z.looseObject({ id: z.string(), level: z.string(), message: z.string(), createdAt: z.string() });
+
 export const CloudUsageSchema = z.looseObject({ totalMicros: z.number().nullish() });
 export const CloudDeleteSchema = z.looseObject({ usage: z.looseObject({}).nullish(), cost: CloudUsageSchema.nullish() });
 
@@ -406,8 +410,12 @@ export class CloudClient implements MachineBackend {
     return { path, size: content.length };
   }
 
-  async logs(): Promise<string[]> {
-    throw new BackendError("machine-logs is local only: the cloud API exposes an event log, not a console log", "NOT_IMPLEMENTED");
+  async logs(nameOrId: string, tail: number): Promise<string[]> {
+    const id = await this.resolve(nameOrId);
+    const events = await this.call("GET", `/v1/machines/${encodeURIComponent(id)}/events`, z.array(CloudEventSchema), { timeoutMs: 30_000 });
+    // The route takes no tail of its own, so the whole log arrives and the
+    // last lines are taken here.
+    return events.slice(-tail).map(formatEvent);
   }
 
   async pullImage(): Promise<ImageInfo> {
@@ -431,6 +439,11 @@ export function findMicros(text: string): number | undefined {
     return undefined;
   }
   return undefined;
+}
+
+// One event, in the shape a console log line has: when, how loud, what.
+export function formatEvent(e: { createdAt: string; level: string; message: string }): string {
+  return `${e.createdAt} ${e.level.toUpperCase()} ${e.message}`;
 }
 
 export function shellQuote(s: string): string {

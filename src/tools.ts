@@ -140,6 +140,6 @@ export const toolDescriptions: Record<ToolName, string> = {
   "start-machine": "Start a stopped machine and wait until commands run in it. This is the way back from stop-machine: create-machine on an existing name is a conflict on both targets.",
   "stop-machine": "Stop a running machine. start-machine starts it again.",
   "delete-machine": "Delete a machine, running or not.",
-  "machine-logs": "Tail the machine's console log. Local only.",
+  "machine-logs": "Tail a machine's log. On local that is the guest console; on cloud it is the machine's event log from the control plane, which records what happened to the machine rather than what ran inside it.",
   "pull-image": "Pull an image into a running machine's local cache. Local only.",
 };

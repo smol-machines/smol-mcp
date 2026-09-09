@@ -34,7 +34,7 @@ shape whichever target answers it.
 | `start-machine` | local, cloud | Starts a stopped machine and waits until commands run in it. |
 | `stop-machine` | local, cloud | Start it again with `start-machine`; `create-machine` on an existing name is a conflict. |
 | `delete-machine` | local, cloud | |
-| `machine-logs` | local | The cloud API has an event log, not a console log. |
+| `machine-logs` | local, cloud | Local is the guest console. Cloud is the machine's event log from the control plane: what happened to the machine, not what ran in it. |
 | `pull-image` | local | The cloud control plane pulls the image itself at create. |
 
 On cloud, a command, a read or a write in a stopped machine starts it and

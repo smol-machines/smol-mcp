@@ -77,6 +77,16 @@ beforeAll(async () => {
         res.writeHead(200, { "content-type": "application/octet-stream" });
         return res.end(have);
       }
+      if (url === `/v1/machines/${ID}/events`) {
+        return send(
+          200,
+          JSON.stringify([
+            { id: "ev-1", level: "info", message: "machine created", createdAt: "2026-09-08T14:47:37Z" },
+            { id: "ev-2", level: "info", message: "machine started", createdAt: "2026-09-08T14:47:38Z" },
+            { id: "ev-3", level: "warn", message: "egress denied", createdAt: "2026-09-08T14:48:02Z" },
+          ]),
+        );
+      }
       if (url === "/v1/machines/mach-gone") return send(404, "machine not found");
       if (url === "/v1/machines/mach-flaky") {
         flaky += 1;
@@ -268,8 +278,17 @@ describe("CloudClient", () => {
     filesRouteServed = true;
   });
 
-  it("refuses the two local-only tools by name", async () => {
-    await expect(client.logs()).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
+  it("reads the machine's event log and keeps the last lines of it", async () => {
+    // The tool used to refuse on this target. The events route is what the
+    // API publishes in place of a console log, and it takes no tail of its
+    // own, so the last lines are taken here.
+    seen.length = 0;
+    const lines = await client.logs(ID, 2);
+    expect(seen.map((s) => s.url)).toEqual([`/v1/machines/${ID}/events`]);
+    expect(lines).toEqual(["2026-09-08T14:47:38Z INFO machine started", "2026-09-08T14:48:02Z WARN egress denied"]);
+  });
+
+  it("refuses pull-image by name, which the control plane does at create", async () => {
     await expect(client.pullImage()).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
   });
 });
