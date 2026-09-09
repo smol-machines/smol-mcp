@@ -130,6 +130,16 @@ export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx 
   return { machine: started, ephemeral, ready };
 }
 
+// Starting a stopped machine is its own tool because create on an existing
+// name is a conflict on both targets, so through this server a stopped
+// machine could not be started at all.
+export async function startMachine(m: Machines, name: string, wait: boolean, ctx: CallCtx = {}): Promise<{ machine: MachineView; ready: boolean }> {
+  const machine = await m.backend.startMachine(name, ctx);
+  if (!wait) return { machine, ready: false };
+  await waitReady(m.backend, name, m.cfg.readyTimeoutSecs, Date.now, sleep, ctx);
+  return { machine, ready: true };
+}
+
 export async function deleteMachine(m: Machines, name: string, ctx: CallCtx = {}): Promise<string> {
   const r = await m.backend.deleteMachine(name, ctx);
   m.state?.remove(name);

@@ -200,6 +200,15 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     }
   });
 
+  registered["start-machine"] = server.registerTool("start-machine", { description: toolDescriptions["start-machine"], inputSchema: inputs["start-machine"], outputSchema: { machine: z.object(machineOutput), ready: z.boolean() } }, async (a, extra) => {
+    try {
+      const r = await ops.startMachine(await pick(a.target), a.name, a.wait ?? true, ctxOf(extra));
+      return ok({ machine: machineView(r.machine), ready: r.ready });
+    } catch (err) {
+      return fail(err);
+    }
+  });
+
   registered["stop-machine"] = server.registerTool("stop-machine", { description: toolDescriptions["stop-machine"], inputSchema: inputs["stop-machine"], outputSchema: machineOutput }, async (a, extra) => {
     try {
       return ok(machineView(await (await pick(a.target)).backend.stopMachine(a.name, ctxOf(extra))));

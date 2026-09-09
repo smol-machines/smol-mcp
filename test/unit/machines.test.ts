@@ -8,7 +8,7 @@ import { FakeBackend, testConfig } from "./fake-backend.js";
 // name their own.
 const SESSION = "session-under-test";
 import { StateFile } from "../../src/local/state.js";
-import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, networkPolicy, runCommand, runOnce, waitReady, writeFile } from "../../src/machines.js";
+import { KEEPALIVE_CMD, cleanupEphemeral, createMachine, networkPolicy, runCommand, runOnce, startMachine, waitReady, writeFile } from "../../src/machines.js";
 
 describe("waitReady", () => {
   it("returns once an exec echoes the nonce, and counts the attempts", async () => {
@@ -231,5 +231,28 @@ describe("cancellation and the timeout ceiling", () => {
     // Refused before the call, so no machine was held at all.
     expect(b.calls).toEqual([]);
     await expect(runCommand(m, "m", { command: ["true"], timeoutSecs: 300 })).resolves.toBeDefined();
+  });
+});
+
+describe("startMachine", () => {
+  it("starts a stopped machine and waits until a command runs in it", async () => {
+    const b = new FakeBackend();
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    b.machines.set("keep", { id: "keep", name: "keep", state: "stopped", cpus: 2, memoryMb: 2048, network: "open", createdAt: 1, image: "alpine", pid: null });
+    b.execImpl = async (_name, req) => ({ exitCode: 0, stdout: `${req.command[1]}\n`, stderr: "" });
+    const r = await startMachine(m, "keep", true);
+    expect(r.machine.state).toBe("running");
+    expect(r.ready).toBe(true);
+    // Readiness is an exec, so the wait proves commands run rather than that
+    // the control plane accepted a start.
+    expect(b.calls.map((c) => c.op)).toEqual(["start", "exec"]);
+  });
+
+  it("returns without waiting when wait is false", async () => {
+    const b = new FakeBackend();
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    const r = await startMachine(m, "keep", false);
+    expect(r.ready).toBe(false);
+    expect(b.calls.map((c) => c.op)).toEqual(["start"]);
   });
 });

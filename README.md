@@ -31,7 +31,8 @@ shape whichever target answers it.
 | `run-once` | local, cloud | Create, start, exec, delete. Deletes the machine even on timeout. |
 | `read-file` | local, cloud | |
 | `write-file` | local, cloud | Waits for readiness first, so the file is not written under a mount that later hides it. |
-| `stop-machine` | local, cloud | |
+| `start-machine` | local, cloud | Starts a stopped machine and waits until commands run in it. |
+| `stop-machine` | local, cloud | Start it again with `start-machine`; `create-machine` on an existing name is a conflict. |
 | `delete-machine` | local, cloud | |
 | `machine-logs` | local | The cloud API has an event log, not a console log. |
 | `pull-image` | local | The cloud control plane pulls the image itself at create. |
