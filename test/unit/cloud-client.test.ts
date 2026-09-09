@@ -25,6 +25,7 @@ const machine = {
 let server: Server;
 let client: CloudClient;
 const seen: { method: string; url: string; auth: string; body: string }[] = [];
+let flaky = 0;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -39,7 +40,10 @@ beforeAll(async () => {
         res.end(payload);
       };
       if (url === "/v1/machines" && req.method === "GET") return send(200, JSON.stringify([machine]));
-      if (url === "/v1/machines" && req.method === "POST") return send(201, JSON.stringify(machine));
+      if (url === "/v1/machines" && req.method === "POST") {
+        if (body.includes("mcp-broken")) return send(500, "internal error", "text/plain");
+        return send(201, JSON.stringify(machine));
+      }
       if (url === `/v1/machines/${ID}` && req.method === "GET") return send(200, JSON.stringify(machine));
       if (url === `/v1/machines/${ID}` && req.method === "DELETE") return send(204, "");
       if (url === `/v1/machines/${ID}?includeUsage=true`) return send(200, JSON.stringify({ id: ID, usage: { uptimeSeconds: 166 }, cost: { baseMicros: 1800, totalMicros: 1879 } }));
@@ -53,6 +57,18 @@ beforeAll(async () => {
         return send(200, JSON.stringify({ stdout: "to-stdout\n", stderr: "to-stderr\n", exitCode: 42, durationMs: 73, machineId: ID }));
       }
       if (url === "/v1/machines/mach-gone") return send(404, "machine not found");
+      if (url === "/v1/machines/mach-flaky") {
+        flaky += 1;
+        if (flaky <= 2) {
+          res.writeHead(503, { "content-type": "text/plain", "x-request-id": "req-503", "retry-after": "0" });
+          return res.end("busy");
+        }
+        return send(200, JSON.stringify({ ...machine, id: "mach-flaky" }));
+      }
+      if (url === "/v1/machines/mach-broken") {
+        res.writeHead(500, { "content-type": "text/plain", "x-request-id": "req-abc123" });
+        return res.end("internal error");
+      }
       // Error bodies are JSON on 401 and plain text on everything else.
       if (url === "/v1/account") return send(401, JSON.stringify({ message: "invalid api key" }));
       send(422, "Failed to deserialize the JSON body into the target type: missing field `source`", "text/plain");
@@ -145,6 +161,34 @@ describe("CloudClient", () => {
     expect(sent.stdin).toBe(Buffer.from("hello").toString("base64"));
     expect(sent.command[2]).toContain("'/workspace/a b.txt'");
     expect((await client.readFile(ID, "/workspace/a b.txt")).toString()).toBe("hello");
+  });
+
+  it("retries a status the service says is temporary, and stops when it answers", async () => {
+    flaky = 0;
+    seen.length = 0;
+    // The readiness poll used to be the only retry in the client, and it
+    // retried a 429 at 1 Hz for two minutes because it could not tell a
+    // temporary refusal from a permanent one.
+    expect((await client.getMachine("mach-flaky")).id).toBe("mach-flaky");
+    expect(seen.filter((s) => s.url === "/v1/machines/mach-flaky")).toHaveLength(3);
+  });
+
+  it("gives up after the retries and carries the request id the docs ask for", async () => {
+    seen.length = 0;
+    const err = (await client.getMachine("mach-broken").catch((e: unknown) => e)) as BackendError;
+    expect(err.code).toBe("HTTP_500");
+    // The id is what the service can look the failure up by, and an error
+    // without it sends the reporter back for a second run.
+    expect(err.message).toContain("x-request-id req-abc123");
+    expect(seen.filter((s) => s.url === "/v1/machines/mach-broken")).toHaveLength(3);
+  });
+
+  it("does not retry a create or an exec, which may have taken effect already", async () => {
+    seen.length = 0;
+    // A create that answered 500 may well have created the machine, and an
+    // exec may well have run the command; a second attempt bills twice.
+    await expect(client.createMachine({ name: "mcp-broken", image: "alpine", cpus: 1, memoryMb: 256, network: { mode: "open" } })).rejects.toThrow();
+    expect(seen.filter((s) => s.method === "POST")).toHaveLength(1);
   });
 
   it("refuses the two local-only tools by name", async () => {

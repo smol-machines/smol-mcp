@@ -46,6 +46,21 @@ export const AccountSchema = z.looseObject({
 });
 export type Account = z.infer<typeof AccountSchema>;
 
+interface RawOptions {
+  json?: unknown;
+  body?: Buffer;
+  timeoutMs?: number;
+  signal?: AbortSignal | undefined;
+}
+
+interface RawResponse {
+  status: number;
+  text: string;
+  buf: Buffer;
+  requestId: string;
+  retryAfter: string | undefined;
+}
+
 export class CloudNotConfigured extends BackendError {
   constructor() {
     super("cloud target is not configured: set SMOL_CLOUD_TOKEN (and SMOL_CLOUD_URL if it is not the default)", "CLOUD_NOT_CONFIGURED");
@@ -86,7 +101,10 @@ export function cloudView(m: CloudMachine): MachineView {
 // Error bodies are JSON on 401 and plain text on everything else, so a client
 // that always calls .json() throws on the common failures. Read the text and
 // only then try to find a message in it.
-function cloudError(method: string, path: string, status: number, text: string): BackendError {
+// The docs ask for the x-request-id of a failed request when reporting one,
+// and it was never read, so the error an agent relayed had nothing the
+// service could look up.
+function cloudError(method: string, path: string, status: number, text: string, requestId?: string): BackendError {
   let message = text.trim();
   try {
     const parsed: unknown = JSON.parse(text);
@@ -99,7 +117,22 @@ function cloudError(method: string, path: string, status: number, text: string):
     // Plain text is the normal case here, not an anomaly.
   }
   const code = status === 404 ? "NOT_FOUND" : status === 409 ? "CONFLICT" : `HTTP_${status}`;
-  return new BackendError(`${method} ${path}: HTTP ${status} ${message.slice(0, 500)}`, code);
+  const id = requestId === undefined || requestId === "" ? "" : ` (x-request-id ${requestId})`;
+  return new BackendError(`${method} ${path}: HTTP ${status} ${message.slice(0, 500)}${id}`, code);
+}
+
+// Statuses worth trying again: the service asked us to wait (429), or it was
+// briefly unable to answer. Everything else is the request's own fault and
+// will fail the same way however many times it is sent.
+const TRANSIENT = new Set([429, 500, 502, 503, 504]);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// The wait before attempt n, honouring Retry-After when the service names one.
+export function retryDelayMs(attempt: number, retryAfter: string | undefined): number {
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 30_000);
+  return Math.min(250 * 2 ** (attempt - 1), 4000);
 }
 
 export class CloudClient implements MachineBackend {
@@ -109,13 +142,15 @@ export class CloudClient implements MachineBackend {
     readonly baseUrl: string,
     private readonly token: string,
     private readonly defaultTimeoutMs = 120_000,
+    // Attempts after the first, for a status the service says is temporary.
+    private readonly retries = 2,
   ) {}
 
   get configured(): boolean {
     return this.token !== "";
   }
 
-  private async raw(method: string, path: string, opts: { json?: unknown; body?: Buffer; timeoutMs?: number; signal?: AbortSignal | undefined } = {}): Promise<{ status: number; text: string; buf: Buffer }> {
+  private async raw(method: string, path: string, opts: RawOptions = {}): Promise<RawResponse> {
     if (!this.configured) throw new CloudNotConfigured();
     const headers: Record<string, string> = { authorization: `Bearer ${this.token}` };
     let body: string | Uint8Array | undefined;
@@ -135,12 +170,27 @@ export class CloudClient implements MachineBackend {
       signal: opts.signal === undefined ? AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs) : AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs)]),
     });
     const buf = Buffer.from(await res.arrayBuffer());
-    return { status: res.status, text: buf.toString("utf8"), buf };
+    return { status: res.status, text: buf.toString("utf8"), buf, requestId: res.headers.get("x-request-id") ?? "", retryAfter: res.headers.get("retry-after") ?? undefined };
   }
 
-  private async call<T>(method: string, path: string, schema: z.ZodType<T>, opts: { json?: unknown; timeoutMs?: number; signal?: AbortSignal | undefined } = {}): Promise<T> {
-    const res = await this.raw(method, path, opts);
-    if (res.status < 200 || res.status >= 300) throw cloudError(method, path, res.status, res.text);
+  // One attempt, then up to `retries` more for a status the service says is
+  // temporary. Retrying is off unless a call site asks for it: a create that
+  // answered 500 may well have created the machine, and an exec may well have
+  // run the command, so only reads opt in.
+  private async withRetries(method: string, path: string, opts: RawOptions & { retries?: number } = {}): Promise<RawResponse> {
+    const retries = opts.retries ?? 0;
+    for (let attempt = 1; ; attempt += 1) {
+      const res = await this.raw(method, path, opts);
+      if (!TRANSIENT.has(res.status) || attempt > retries) return res;
+      const wait = retryDelayMs(attempt, res.retryAfter);
+      await sleep(wait);
+      opts.signal?.throwIfAborted();
+    }
+  }
+
+  private async call<T>(method: string, path: string, schema: z.ZodType<T>, opts: RawOptions & { retries?: number } = {}): Promise<T> {
+    const res = await this.withRetries(method, path, opts);
+    if (res.status < 200 || res.status >= 300) throw cloudError(method, path, res.status, res.text, res.requestId);
     let json: unknown;
     try {
       json = res.text === "" ? {} : JSON.parse(res.text);
@@ -153,11 +203,11 @@ export class CloudClient implements MachineBackend {
   }
 
   async account(ctx: CallCtx = {}): Promise<Account> {
-    return this.call("GET", "/v1/account", AccountSchema, { timeoutMs: 30_000, signal: ctx.signal });
+    return this.call("GET", "/v1/account", AccountSchema, { timeoutMs: 30_000, signal: ctx.signal, retries: this.retries });
   }
 
   async listMachines(ctx: CallCtx = {}): Promise<MachineView[]> {
-    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000, signal: ctx.signal });
+    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000, signal: ctx.signal, retries: this.retries });
     return list.map(cloudView);
   }
 
@@ -165,7 +215,7 @@ export class CloudClient implements MachineBackend {
   // extra list call, which is what the CLI does too.
   async resolve(nameOrId: string, ctx: CallCtx = {}): Promise<string> {
     if (nameOrId.startsWith("mach-")) return nameOrId;
-    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000, signal: ctx.signal });
+    const list = await this.call("GET", "/v1/machines", z.array(CloudMachineSchema), { timeoutMs: 30_000, signal: ctx.signal, retries: this.retries });
     const hit = list.find((m) => m.name === nameOrId);
     if (!hit) throw new BackendError(`machine '${nameOrId}' not found on the cloud target`, "NOT_FOUND");
     return hit.id;
@@ -173,7 +223,7 @@ export class CloudClient implements MachineBackend {
 
   async getMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {
     const id = await this.resolve(nameOrId, ctx);
-    return cloudView(await this.call("GET", `/v1/machines/${encodeURIComponent(id)}`, CloudMachineSchema, { timeoutMs: 30_000, signal: ctx.signal }));
+    return cloudView(await this.call("GET", `/v1/machines/${encodeURIComponent(id)}`, CloudMachineSchema, { timeoutMs: 30_000, signal: ctx.signal, retries: this.retries }));
   }
 
   async createMachine(opts: CreateOptions, ctx: CallCtx = {}): Promise<MachineView> {
@@ -193,7 +243,7 @@ export class CloudClient implements MachineBackend {
   async startMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {
     const id = await this.resolve(nameOrId, ctx);
     const res = await this.raw("POST", `/v1/machines/${encodeURIComponent(id)}/start`, { json: {}, timeoutMs: 180_000, signal: ctx.signal });
-    if (res.status < 200 || res.status >= 300) throw cloudError("POST", `/v1/machines/${id}/start`, res.status, res.text);
+    if (res.status < 200 || res.status >= 300) throw cloudError("POST", `/v1/machines/${id}/start`, res.status, res.text, res.requestId);
     // 202 with no body is the detached form; read the machine back so the
     // caller always gets a view rather than an empty object.
     if (res.text.trim() === "") return this.getMachine(id, ctx);
@@ -204,7 +254,7 @@ export class CloudClient implements MachineBackend {
   async stopMachine(nameOrId: string, ctx: CallCtx = {}): Promise<MachineView> {
     const id = await this.resolve(nameOrId, ctx);
     const res = await this.raw("POST", `/v1/machines/${encodeURIComponent(id)}/stop`, { json: {}, timeoutMs: 180_000, signal: ctx.signal });
-    if (res.status < 200 || res.status >= 300) throw cloudError("POST", `/v1/machines/${id}/stop`, res.status, res.text);
+    if (res.status < 200 || res.status >= 300) throw cloudError("POST", `/v1/machines/${id}/stop`, res.status, res.text, res.requestId);
     return this.getMachine(id, ctx);
   }
 
@@ -215,7 +265,7 @@ export class CloudClient implements MachineBackend {
     const id = await this.resolve(nameOrId, ctx);
     const path = `/v1/machines/${encodeURIComponent(id)}?includeUsage=true`;
     const res = await this.raw("DELETE", path, { timeoutMs: 120_000, signal: ctx.signal });
-    if (res.status < 200 || res.status >= 300) throw cloudError("DELETE", path, res.status, res.text);
+    if (res.status < 200 || res.status >= 300) throw cloudError("DELETE", path, res.status, res.text, res.requestId);
     const micros = findMicros(res.text);
     return { deleted: nameOrId, ...(micros !== undefined ? { usageMicros: micros } : {}) };
   }
