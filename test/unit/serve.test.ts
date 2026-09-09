@@ -6,7 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../../src/server.js";
-import { isOrphan, localUnavailable, serveEnv } from "../../src/local/serve.js";
+import { checkVersion, isOrphan, localUnavailable, serveEnv, versionAtLeast } from "../../src/local/serve.js";
 import type { HostChecks, ServeHandle } from "../../src/local/serve.js";
 import { ServePool } from "../../src/local/pool.js";
 import { testConfig } from "./fake-backend.js";
@@ -167,5 +167,29 @@ describe("what counts as an orphaned serve", () => {
     expect(isOrphan({ pid: 10, owner: 11, url }, url, alive([11]))).toBe(false);
     expect(isOrphan({ pid: 10, owner: 11, url: "unix:///tmp/other.sock" }, url, alive([10]))).toBe(false);
     expect(isOrphan(undefined, url, alive([10]))).toBe(false);
+  });
+});
+
+describe("the minimum smolvm version", () => {
+  it("compares dotted versions numerically, not as strings", () => {
+    // 1.9.0 sorts above 1.14.3 as a string, which is the comparison that
+    // would accept exactly the binaries this check exists to refuse.
+    expect(versionAtLeast("1.14.3", "1.14.0")).toBe(true);
+    expect(versionAtLeast("1.9.0", "1.14.0")).toBe(false);
+    expect(versionAtLeast("1.14.0", "1.14.0")).toBe(true);
+    expect(versionAtLeast("2.0.0", "1.14.0")).toBe(true);
+    expect(versionAtLeast("1.14.3-rc1", "1.14.0")).toBe(true);
+  });
+
+  it("refuses an older serve by name, and says how to accept it anyway", () => {
+    // An older serve rejects unknown fields on the exec body, so a command
+    // carrying stdin fails with a 400 nobody can read.
+    expect(() => checkVersion("0.5.20", "1.14.0")).toThrow(/reports version 0.5.20/);
+    expect(() => checkVersion("0.5.20", "1.14.0")).toThrow(/SMOL_MCP_MIN_SMOLVM/);
+    expect(() => checkVersion("1.14.3", "1.14.0")).not.toThrow();
+    // An empty minimum is the way off the check, and a serve that reports no
+    // version at all is not evidence of anything.
+    expect(() => checkVersion("0.5.20", "")).not.toThrow();
+    expect(() => checkVersion("", "1.14.0")).not.toThrow();
   });
 });

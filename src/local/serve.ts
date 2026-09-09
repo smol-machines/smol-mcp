@@ -83,6 +83,32 @@ export function serveKey(cfg: Config): string {
   return `${cfg.smolvm}|${cfg.localUrl}|${cfg.runtimeDir}`;
 }
 
+// Compare two dotted versions numerically, ignoring anything after the
+// numbers. Returns true when `found` is at least `wanted`.
+export function versionAtLeast(found: string, wanted: string): boolean {
+  const parts = (v: string) => v.split(".").map((p) => Number.parseInt(p, 10) || 0);
+  const a = parts(found);
+  const b = parts(wanted);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
+// /health reports the running binary's version and nothing compared it. An
+// older serve rejects `deny_unknown_fields` on the exec body, so a command
+// carrying stdin either fails with a 400 nobody can read or, worse, runs
+// without the input it was given.
+export function checkVersion(found: string, wanted: string): void {
+  if (wanted === "" || found === "" || versionAtLeast(found, wanted)) return;
+  throw new BackendError(
+    `smolvm serve reports version ${found} and this server needs at least ${wanted}; upgrade smolvm, or set SMOL_MCP_MIN_SMOLVM to accept the older one and expect run-command with stdin to fail`,
+    "SMOLVM_TOO_OLD",
+  );
+}
+
 // The environment a hypervisor needs, and nothing else. An allow-list rather
 // than a deny-list: a new secret in this process's environment must not reach
 // the child by default just because nobody thought to name it here.
@@ -155,6 +181,7 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
   for (const url of candidateUrls(cfg)) {
     const version = await probe(url);
     if (version === undefined) continue;
+    checkVersion(version, cfg.minSmolvm);
     const reclaimed = isOrphan(orphan, url);
     log(reclaimed ? `reclaiming the smolvm serve ${version} an earlier instance left at ${url} (pid ${orphan?.pid})` : `using existing smolvm serve ${version} at ${url}`);
     if (!reclaimed || orphan === undefined) return { client: new LocalClient(url), url, owned: false, version, stop: async () => {} };
@@ -239,6 +266,14 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
   // owns from one that was already here.
   if (child.pid !== undefined) writeFileSync(pidPath, JSON.stringify({ pid: child.pid, owner: process.pid, url, startedAt: Date.now() }, null, 2), { mode: 0o600 });
   log(`started smolvm serve ${version} (pid ${child.pid}) at ${url}`);
+  // After the start, not before it: a version this server cannot use is
+  // still worth starting and stopping cleanly rather than leaving half up.
+  try {
+    checkVersion(version, cfg.minSmolvm);
+  } catch (err) {
+    child.kill("SIGTERM");
+    throw err;
+  }
 
   const stop = async () => {
     if (exited !== undefined) return;

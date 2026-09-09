@@ -8,6 +8,9 @@ import { z } from "zod";
 export const ConfigSchema = z.object({
   // Path to the smolvm binary. "smolvm" resolves on PATH.
   smolvm: z.string().default("smolvm"),
+  // The oldest smolvm this server will talk to, checked against /health on
+  // the first local call. Empty turns the check off.
+  minSmolvm: z.string().default("1.14.0"),
   // Address of a serve to use. Empty means: probe the known locations, then
   // start one in runtimeDir. Forms: unix:///abs/path.sock or http://127.0.0.1:port
   localUrl: z.string().default(""),
@@ -87,6 +90,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 
 const ENV_KEYS: Record<keyof Config, string> = {
   smolvm: "SMOLVM",
+  minSmolvm: "SMOL_MCP_MIN_SMOLVM",
   localUrl: "SMOL_LOCAL_URL",
   runtimeDir: "SMOL_MCP_RUNTIME_DIR",
   machinePrefix: "SMOL_MCP_MACHINE_PREFIX",

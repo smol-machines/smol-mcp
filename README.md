@@ -271,6 +271,7 @@ dropping unknown fields is exactly the failure this avoids.
 
 | Setting | Env | Default | Why |
 |---|---|---|---|
+| minimum smolvm | `SMOL_MCP_MIN_SMOLVM` | 1.14.0 | Checked against `/health` on the first local call. An older serve rejects unknown fields on the exec body, so `run-command` with `stdin` fails there. Empty turns the check off. |
 | memory | `SMOL_MCP_MEMORY_MB` | 2048 MiB | Enough for an interpreter and a build; small enough to boot several at once. |
 | cpus | `SMOL_MCP_CPUS` | 2 | One core leaves nothing for the guest agent while a command runs. |
 | exec timeout | `SMOL_MCP_EXEC_TIMEOUT_SECS` | 120 s | Long enough for a package install, short enough that a hung command does not hold a tool call open. |
