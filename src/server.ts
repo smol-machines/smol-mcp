@@ -11,7 +11,8 @@ import type { Config, TargetMode } from "./config.js";
 import { resolveTargets } from "./config.js";
 import { StateFile } from "./local/state.js";
 import { MemoryStore } from "./memory-state.js";
-import { ensureServe } from "./local/serve.js";
+import { ensureServe, serveKey } from "./local/serve.js";
+import { serves } from "./local/pool.js";
 import type { ServeHandle } from "./local/serve.js";
 import * as ops from "./machines.js";
 import type { Machines } from "./machines.js";
@@ -75,7 +76,7 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     started ??= (async () => {
       const handle: ServeHandle = opts.localBackend
         ? { client: opts.localBackend as never, url: "test", owned: false, version: "test", stop: async () => {} }
-        : await ensureServe(cfg, log);
+        : await serves.acquire(serveKey(cfg), () => ensureServe(cfg, log));
       const machines: Machines = { backend: opts.localBackend ?? handle.client, cfg, state, session };
       // Machines a crashed earlier instance left behind.
       const stale = await ops.cleanupEphemeral(machines);

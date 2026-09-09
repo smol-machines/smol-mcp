@@ -93,8 +93,9 @@ SMOL_MCP_AUTH_TOKEN=$(openssl rand -hex 16) \
   buffering is not ours and no tool here streams.
 - Each session gets its own server instance, and ending the session (an HTTP
   DELETE) deletes that session's ephemeral machines, the way stdin EOF does on
-  stdio. **The local target's ephemeral state file is shared between sessions**,
-  so run the HTTP transport for the cloud target; that is the case it is for.
+  stdio. A session cleans up only what it created, and the `smolvm serve` the
+  sessions share is stopped by the last one to let go of it, not by whichever
+  one started it.
 
 ### Hosting it in a smol machine
 

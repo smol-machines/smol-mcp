@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../../src/server.js";
 import { localUnavailable } from "../../src/local/serve.js";
-import type { HostChecks } from "../../src/local/serve.js";
+import type { HostChecks, ServeHandle } from "../../src/local/serve.js";
+import { ServePool } from "../../src/local/pool.js";
 import { testConfig } from "./fake-backend.js";
 
 const checks = (over: Partial<HostChecks> = {}): HostChecks => ({
@@ -56,5 +57,72 @@ describe("a server whose local target cannot start", () => {
     const app = await createServer({ cfg, log: () => {} });
     await expect(app.local()).rejects.toThrow(/local target is unavailable/);
     await expect(app.shutdown()).resolves.toEqual({ deleted: [], failed: [] });
+  });
+});
+
+describe("the shared serve, by reference count", () => {
+  const fakeHandle = (stopped: string[]): ServeHandle => ({
+    client: null as never,
+    url: "unix:///tmp/fake.sock",
+    owned: true,
+    version: "test",
+    stop: async () => {
+      stopped.push("stopped");
+    },
+  });
+
+  it("starts one serve for many sessions and stops it only when the last one lets go", async () => {
+    // Executed against a fake serve before this: the session that spawned it
+    // stopped it on its own close, and the next call from a session still
+    // holding a client to that socket was ECONNREFUSED.
+    const pool = new ServePool();
+    const stopped: string[] = [];
+    let starts = 0;
+    const start = async () => {
+      starts += 1;
+      return fakeHandle(stopped);
+    };
+    const a = await pool.acquire("k", start);
+    const b = await pool.acquire("k", start);
+    const c = await pool.acquire("k", start);
+    expect(starts).toBe(1);
+    expect(pool.refs("k")).toBe(3);
+
+    await a.stop();
+    // A release repeated is not a second release.
+    await a.stop();
+    await b.stop();
+    expect(stopped).toEqual([]);
+    expect(pool.refs("k")).toBe(1);
+
+    await c.stop();
+    expect(stopped).toEqual(["stopped"]);
+    expect(pool.refs("k")).toBe(0);
+  });
+
+  it("keeps two runtime directories apart", async () => {
+    const pool = new ServePool();
+    const stopped: string[] = [];
+    let starts = 0;
+    const start = async () => {
+      starts += 1;
+      return fakeHandle(stopped);
+    };
+    await pool.acquire("one", start);
+    await pool.acquire("two", start);
+    expect(starts).toBe(2);
+  });
+
+  it("does not leave a failed start in the pool for the next session to inherit", async () => {
+    const pool = new ServePool();
+    let attempts = 0;
+    const failing = async (): Promise<ServeHandle> => {
+      attempts += 1;
+      throw new Error("no hypervisor");
+    };
+    await expect(pool.acquire("k", failing)).rejects.toThrow(/no hypervisor/);
+    await expect(pool.acquire("k", failing)).rejects.toThrow(/no hypervisor/);
+    expect(attempts).toBe(2);
+    expect(pool.refs("k")).toBe(0);
   });
 });

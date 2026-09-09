@@ -76,6 +76,12 @@ export function localUnavailable(cfg: Config, checks: HostChecks = hostChecks): 
   return undefined;
 }
 
+// Two configurations that resolve to the same listen address share a serve;
+// two that do not cannot, because the address is what a client dials.
+export function serveKey(cfg: Config): string {
+  return `${cfg.smolvm}|${cfg.localUrl}|${cfg.runtimeDir}`;
+}
+
 export async function ensureServe(cfg: Config, log: (msg: string) => void): Promise<ServeHandle> {
   mkdirSync(cfg.runtimeDir, { recursive: true, mode: 0o700 });
 
