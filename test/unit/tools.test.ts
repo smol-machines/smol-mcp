@@ -78,7 +78,7 @@ describe("what the descriptions promise about egress", () => {
     // empty allow-list and that it was enforced; the code sends an
     // unroutable range, and an empty list is refused outright.
     const expected =
-      "Egress mode. Default open, except run-once on cloud which is blocked. Local: a blocked machine whose image still has to be pulled from a registry is refused by the API; pass open or an allow-list for that create. Cloud: blocked is sent as an allow-list of an unroutable range.";
+      "Egress mode. Default blocked on both targets. Local: a blocked machine whose image still has to be pulled from a registry is refused by the API; pass open or an allow-list for that create. Cloud: blocked is sent as an allow-list of an unroutable range, and a cloud machine that publishes a port cannot also block egress.";
     expect(described("create-machine", "network")).toBe(expected);
     expect(described("run-once", "network")).toBe(expected);
   });

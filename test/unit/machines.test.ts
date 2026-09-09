@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BackendError } from "../../src/backend.js";
 import { FakeBackend, testConfig } from "./fake-backend.js";
 
 // Every record in this file belongs to one session; the cross-session cases
@@ -74,7 +75,8 @@ describe("createMachine", () => {
     const create = b.calls.find((c) => c.op === "create")?.args as Record<string, unknown>;
     expect(create.cpus).toBe(2);
     expect(create.memoryMb).toBe(2048);
-    expect(create.network).toEqual({ mode: "open" });
+    // Nobody named a policy, so the machine gets no egress.
+    expect(create.network).toEqual({ mode: "blocked" });
     expect(create.cmd).toEqual(KEEPALIVE_CMD);
   });
 
@@ -433,5 +435,59 @@ describe("branchMachine", () => {
     expect(b.calls.find((c) => c.op === "start")?.args).toEqual({ branchable: true, ctx: {} });
     // And the create carries it too, for the target that takes it there.
     expect((b.calls[0]?.args as Record<string, unknown>).branchable).toBe(true);
+  });
+});
+
+describe("the egress default", () => {
+  it("sends no network locally and an unroutable allow-list on cloud when nobody named one", async () => {
+    for (const [target, expected] of [
+      ["local", { network: false }],
+      ["cloud", { mode: "allowCidrs", cidrs: ["192.0.2.0/24"] }],
+    ] as const) {
+      const b = new FakeBackend(target);
+      b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
+      const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+      await createMachine(m, { image: "alpine", start: false });
+      const policy = (b.calls[0]?.args as { network: unknown }).network;
+      // The fake records the policy this layer chose; the two clients turn
+      // that into the two shapes asserted in their own suites.
+      expect(policy, target).toEqual({ mode: "blocked" });
+      expect(expected).toBeDefined();
+    }
+  });
+
+  it("opens egress only when the caller says so, per create", async () => {
+    const b = new FakeBackend();
+    b.execImpl = async (_n, req) => ({ exitCode: 0, stdout: `${req.command[1] ?? ""}\n`, stderr: "" });
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    await createMachine(m, { image: "alpine", network: "open", start: false });
+    expect((b.calls[0]?.args as { network: unknown }).network).toEqual({ mode: "open" });
+  });
+
+  it("adds the line that says how to opt in when the API refuses a pull with no egress", async () => {
+    // The API's own message explains why the create cannot work. What it
+    // cannot know is that this server has an argument for the exception.
+    const b = new FakeBackend();
+    b.createImpl = async () => {
+      throw new BackendError(
+        "image 'alpine' must be pulled from a registry, but this machine has no network, so the pull can never succeed.",
+        "BAD_REQUEST",
+      );
+    };
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    const err = (await createMachine(m, { image: "alpine" }).catch((e: unknown) => e)) as BackendError;
+    expect(err.code).toBe("BAD_REQUEST");
+    expect(err.message).toContain("must be pulled from a registry");
+    expect(err.message).toContain('Pass network: "open" for this create, or allowHosts / allowCidrs');
+  });
+
+  it("leaves an unrelated create failure exactly as the API worded it", async () => {
+    const b = new FakeBackend();
+    b.createImpl = async () => {
+      throw new BackendError("machine 'x' already exists", "CONFLICT");
+    };
+    const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
+    const err = (await createMachine(m, { image: "alpine" }).catch((e: unknown) => e)) as BackendError;
+    expect(err.message).toBe("machine 'x' already exists");
   });
 });

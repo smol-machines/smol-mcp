@@ -103,15 +103,36 @@ export interface CreateArgs extends NetworkArgs {
   branchable?: boolean | undefined;
 }
 
+// The local API refuses a create whose image has to be pulled inside the
+// guest when that guest has no egress. Its message says why; this adds the one
+// thing it cannot know, which is how to ask this server for an exception.
+const PULL_NEEDS_EGRESS = "must be pulled from a registry";
+
+export function withEgressHint(err: unknown): unknown {
+  if (!(err instanceof BackendError) || !err.message.includes(PULL_NEEDS_EGRESS)) return err;
+  return new BackendError(
+    `${err.message}\nThis server defaults to no egress. Pass network: "open" for this create, or allowHosts / allowCidrs naming what the pull and the workload need.`,
+    err.code,
+  );
+}
+
+async function createOrHint(m: Machines, opts: Parameters<MachineBackend["createMachine"]>[0], ctx: CallCtx) {
+  try {
+    return await m.backend.createMachine(opts, ctx);
+  } catch (err) {
+    throw withEgressHint(err);
+  }
+}
+
 export async function createMachine(m: Machines, args: CreateArgs, ctx: CallCtx = {}) {
   const name = args.name ?? ephemeralName(m.cfg.machinePrefix);
   const ephemeral = name.startsWith(m.cfg.machinePrefix);
-  const info = await m.backend.createMachine({
+  const info = await createOrHint(m, {
     name,
     image: args.image,
     cpus: args.cpus ?? m.cfg.cpus,
     memoryMb: args.memoryMb ?? m.cfg.memoryMb,
-    network: networkPolicy(args, "open"),
+    network: networkPolicy(args, m.cfg.networkDefault as "open" | "blocked"),
     ...(args.ports ? { ports: args.ports } : {}),
     ...(args.mounts ? { mounts: args.mounts } : {}),
     ...(args.storageGb !== undefined ? { storageGb: args.storageGb } : {}),
@@ -269,11 +290,11 @@ export interface RunOnceArgs extends RunArgs, NetworkArgs {
 export async function runOnce(m: Machines, args: RunOnceArgs, ctx: CallCtx = {}): Promise<CommandResult & { machine: string }> {
   const name = ephemeralName(m.cfg.machinePrefix, "once");
   m.state?.add(name, m.session);
-  const fallback = m.backend.target === "cloud" ? "blocked" : (m.cfg.runOnceNetwork as "open" | "blocked");
+  const fallback = m.cfg.runOnceNetwork as "open" | "blocked";
   let result: CommandResult | undefined;
   let failure: unknown;
   try {
-    await m.backend.createMachine({
+    await createOrHint(m, {
       name,
       image: args.image,
       cpus: args.cpus ?? m.cfg.cpus,

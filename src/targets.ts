@@ -62,6 +62,12 @@ export function serverInstructions(mode: TargetMode, cfg: Config): string {
     lines.push(`It cannot ${info.cannot.join("; it cannot ")}.`);
   }
   lines.push("");
+  // The one thing an agent has to know before its first create, because the
+  // default is no egress and the local pull happens inside the guest.
+  lines.push(
+    'Machines get no egress unless the call asks for it. On the local fleet an image pulled from a registry is pulled inside the guest, so a create with no egress is refused by the API: pass network "open", or allowHosts and allowCidrs naming what the pull needs, for that create.',
+  );
+  lines.push("");
   lines.push(`The same facts, machine readable and re-read at any time, are the ${TARGETS_URI} resource.`);
   return lines.join("\n");
 }

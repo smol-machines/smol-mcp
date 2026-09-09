@@ -12,10 +12,11 @@ describe("config", () => {
     expect(cfg.execTimeoutSecs).toBe(120);
     expect(cfg.maxOutputBytes).toBe(64 * 1024);
     expect(cfg.machinePrefix).toBe("mcp-");
-    // The design default is off; the local API refuses a create with no
-    // egress path when the image still has to be pulled, so the shipped
-    // local default is open. Cloud does not read this (README).
-    expect(cfg.runOnceNetwork).toBe("open");
+    // Off on both targets. The local API refuses a blocked create whose
+    // image still has to be pulled, and the tool error says how to opt in for
+    // that one create rather than the default opening egress for everything.
+    expect(cfg.networkDefault).toBe("blocked");
+    expect(cfg.runOnceNetwork).toBe("blocked");
     expect(cfg.ephemeralTtlSecs).toBe(3600);
   });
 

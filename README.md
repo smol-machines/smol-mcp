@@ -152,7 +152,8 @@ dropping unknown fields is exactly the failure this avoids.
 | exec timeout ceiling | `SMOL_MCP_MAX_EXEC_TIMEOUT_SECS` | 900 s | The longest `timeoutSecs` a caller may ask for. A tool call holds a machine, and on cloud a bill, for as long as it runs. |
 | output truncation | `SMOL_MCP_MAX_OUTPUT_BYTES` | 64 KiB per stream | A tool result is read by a model with a context budget. Past this the result keeps the head and the tail, says how many bytes fell between them, and writes the whole stream into the machine so it can be read back. Truncation is reported, never silent. |
 | readiness timeout | `SMOL_MCP_READY_TIMEOUT_SECS` | 120 s | Covers a cold image pull inside the guest. |
-| run-once network (local) | `SMOL_MCP_RUN_ONCE_NETWORK` | `open` | See below. |
+| egress default | `SMOL_MCP_NETWORK_DEFAULT` | `blocked` | `create-machine` when the call names no policy. See below. |
+| run-once egress | `SMOL_MCP_RUN_ONCE_NETWORK` | `blocked` | The same, for `run-once`. See below. |
 | ephemeral TTL | `SMOL_MCP_EPHEMERAL_TTL_SECS` | 3600 s | Sent as `ttlSeconds` where the API has one, so a killed server cannot leave a cloud machine billing forever. |
 | ephemeral idle stop | `SMOL_MCP_EPHEMERAL_AUTO_STOP_SECS` | 900 s | Sent as `autoStopSeconds`, so an abandoned cloud machine stops paying for cpu and memory at the first quiet window instead of running to its TTL. |
 | machine prefix | `SMOL_MCP_MACHINE_PREFIX` | `mcp-` | The marker that makes a machine ephemeral. |
@@ -184,13 +185,18 @@ dropping unknown fields is exactly the failure this avoids.
 - **The HTTP transport authenticates every request and refuses to start
   without a token.** Not a warning, not a default token: the process exits.
 
-### The run-once network default is not the same on both targets
+### Egress is off unless the call asks for it
 
-The design intent is no egress for a throwaway command. Cloud can do that;
-local cannot, and the reason is worth stating rather than hiding.
+The intent is that a machine an agent asked for cannot reach the internet
+because nobody said otherwise. `create-machine` and `run-once` both default to
+no egress, on both targets. `SMOL_MCP_NETWORK_DEFAULT` and
+`SMOL_MCP_RUN_ONCE_NETWORK` move that default for an operator who wants it
+open; the tool arguments `network`, `allowHosts` and `allowCidrs` move it per
+call.
 
-**Local.** The image is pulled from a registry *inside the guest*, so a
-machine with no egress can never start. The API says so at create time:
+**The local trap, and it is why the default has to be opt-out per create.** An
+image is pulled from a registry *inside the guest*, so a machine with no
+egress cannot start from one. The API refuses it at create time:
 
 ```
 image 'alpine' must be pulled from a registry, but this machine has no
@@ -200,28 +206,37 @@ network-isolated, supply the image locally instead: `docker save alpine |
 smolvm machine create --image - ...`
 ```
 
-An egress allow-list is accepted and is genuinely enforced, including on the
-pull. That sounds like the answer, and it is a trap: the blob CDN host is not
-knowable in advance. Allow-listing docker.io's documented hosts produced
+This server passes that message through and adds one line naming the argument
+that grants the exception for that create. An egress allow-list is accepted
+and is honoured on the pull, which sounds like the better answer and is a
+trap: the blob CDN host is not knowable in advance. Allow-listing docker.io's
+documented hosts produced
 
 ```
 dial tcp: lookup production.cloudfront.docker.com ...: no such host
 ```
 
 because the CDN name is neither `docker.io` nor any of the hosts the docs
-name. So the shipped local default is `open`, and `allowHosts`/`allowCidrs`
-are exposed on `create-machine` and `run-once` for a caller who knows which
-hosts their image and workload need.
+name. So a registry image on the local target realistically needs
+`network: "open"` for the create that pulls it.
+
+**Which means the blocked default is a default, not a guarantee.** The
+server's instructions tell the agent exactly that: pass `network: "open"` for
+a registry image on local. An agent following them will open egress on its own
+whenever it wants an image it does not have. If you need isolation you cannot
+talk an agent out of, supply the image locally (`docker save ... | smolvm
+machine create --image -`) so nothing has to be pulled, or give an allow-list
+that names what the workload may reach. The default stops a machine reaching
+the internet by accident; it does not stop an agent asking.
 
 **Cloud.** The control plane pulls the image, so the guest never needs the
-registry, and `run-once` denies egress with no configuration. One API fact
-shapes how the deny is spelled: `{"mode": "allowCidrs", "cidrs": []}` is
-refused with `HTTP 400 allowCidrs network mode requires at least one CIDR or
-host`.
-
-So the deny is an allow-list of `192.0.2.0/24`, RFC 5737 TEST-NET-1, reserved
-for documentation and routed nowhere, and the integration test asserts it from
-inside the guest on the byte count rather than on an exit code.
+registry and a blocked machine starts normally. One API fact shapes how the
+deny is spelled: `{"mode": "allowCidrs", "cidrs": []}` is refused with
+`HTTP 400 allowCidrs network mode requires at least one CIDR or host`. So the
+deny goes out as an allow-list of `192.0.2.0/24`, RFC 5737 TEST-NET-1,
+reserved for documentation and routed nowhere. A cloud machine that publishes
+a port cannot also block egress, and `create-machine` refuses that
+combination rather than sending it.
 
 ## Constraints this server is built around
 

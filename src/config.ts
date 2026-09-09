@@ -21,7 +21,13 @@ export const ConfigSchema = z.object({
   // refuses a create with no egress path whenever the image still has to be
   // pulled from a registry, and run-once always pulls; the cloud target,
   // where the control plane pulls, defaults to blocked. See the README.
-  runOnceNetwork: z.enum(["open", "blocked"]).default("open"),
+  // Egress for a machine whose caller named no policy. Blocked on both
+  // targets: a machine an agent asked for should not reach the internet
+  // because nobody said otherwise. The local API refuses a blocked create
+  // whose image still has to be pulled, and the tool error says how to opt in
+  // for that create; see the README.
+  networkDefault: z.enum(["open", "blocked"]).default("blocked"),
+  runOnceNetwork: z.enum(["open", "blocked"]).default("blocked"),
   // Control-plane backstop on an ephemeral machine, sent as ttlSeconds where
   // the API has one (cloud). Long enough not to cut a legitimate run short,
   // short enough that a killed server cannot leave a machine billing forever.
@@ -86,6 +92,7 @@ const ENV_KEYS: Record<keyof Config, string> = {
   machinePrefix: "SMOL_MCP_MACHINE_PREFIX",
   memoryMb: "SMOL_MCP_MEMORY_MB",
   cpus: "SMOL_MCP_CPUS",
+  networkDefault: "SMOL_MCP_NETWORK_DEFAULT",
   runOnceNetwork: "SMOL_MCP_RUN_ONCE_NETWORK",
   ephemeralTtlSecs: "SMOL_MCP_EPHEMERAL_TTL_SECS",
   ephemeralAutoStopSecs: "SMOL_MCP_EPHEMERAL_AUTO_STOP_SECS",

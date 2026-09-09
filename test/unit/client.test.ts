@@ -101,6 +101,15 @@ describe("LocalClient parsing", () => {
     for (const key of ["ports", "mounts", "storageGb", "overlayGb"]) expect(body, key).not.toHaveProperty(key);
   });
 
+  it("sends network false for a machine nobody gave a policy", async () => {
+    seen.length = 0;
+    await client.createMachine({ name: "b", image: "alpine", cpus: 1, memoryMb: 1024, network: { mode: "blocked" } });
+    const body = JSON.parse(seen[0]?.body ?? "{}") as Record<string, unknown>;
+    expect(body.network).toBe(false);
+    expect(body).not.toHaveProperty("allowedHosts");
+    expect(body).not.toHaveProperty("allowedCidrs");
+  });
+
   it("carries an egress allow-list in allowedHosts, which the API enforces on the in-guest pull", async () => {
     seen.length = 0;
     await client.createMachine({ name: "b", image: "alpine", cpus: 1, memoryMb: 1024, network: { mode: "allow", hosts: ["registry-1.docker.io"], cidrs: [] } });

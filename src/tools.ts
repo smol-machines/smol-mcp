@@ -23,7 +23,7 @@ const envMap = z.record(z.string(), z.string()).optional().describe("Environment
 const network = z
   .enum(["open", "blocked"])
   .optional()
-  .describe("Egress mode. Default open, except run-once on cloud which is blocked. Local: a blocked machine whose image still has to be pulled from a registry is refused by the API; pass open or an allow-list for that create. Cloud: blocked is sent as an allow-list of an unroutable range.");
+  .describe("Egress mode. Default blocked on both targets. Local: a blocked machine whose image still has to be pulled from a registry is refused by the API; pass open or an allow-list for that create. Cloud: blocked is sent as an allow-list of an unroutable range, and a cloud machine that publishes a port cannot also block egress.");
 const allowHosts = z.array(z.string()).optional().describe("Egress allow-list of hostnames. Overrides network. Local: sent as allowedHosts. Cloud: sent inside the same cidrs list the published schema names, alongside allowCidrs.");
 const allowCidrs = z.array(z.string()).optional().describe("Egress allow-list of CIDR ranges. Overrides network.");
 

@@ -14,6 +14,8 @@ export class FakeBackend implements MachineBackend {
   // exec handler, replaceable per test
   execImpl: (name: string, req: ExecOptions) => Promise<ExecResult> = async () => ({ exitCode: 0, stdout: "", stderr: "" });
   deleteImpl: (name: string) => Promise<void> = async () => {};
+  // create handler, replaceable per test
+  createImpl: ((opts: CreateOptions) => Promise<void>) | undefined;
 
   // A backend whose id is not the name, the way the cloud API's is.
   idFor: (name: string) => string = (name) => name;
@@ -33,6 +35,7 @@ export class FakeBackend implements MachineBackend {
   }
   async createMachine(opts: CreateOptions) {
     this.calls.push({ op: "create", name: opts.name, args: opts });
+    if (this.createImpl) await this.createImpl(opts);
     if (this.machines.has(opts.name)) throw new BackendError(`machine '${opts.name}' already exists`, "CONFLICT");
     const m = this.info(opts.name, "created");
     this.machines.set(opts.name, m);
