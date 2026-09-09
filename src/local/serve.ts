@@ -4,11 +4,12 @@
 // guest rollout ingress), so a failed spawn names that cause.
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { accessSync, constants, createWriteStream, existsSync, mkdirSync, rmSync } from "node:fs";
+import { accessSync, constants, createWriteStream, existsSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { BackendError } from "../backend.js";
 import type { Config } from "../config.js";
 import { LocalClient } from "./client.js";
+import { ensureRuntimeDir } from "./runtime-dir.js";
 
 export interface ServeHandle {
   client: LocalClient;
@@ -83,7 +84,7 @@ export function serveKey(cfg: Config): string {
 }
 
 export async function ensureServe(cfg: Config, log: (msg: string) => void): Promise<ServeHandle> {
-  mkdirSync(cfg.runtimeDir, { recursive: true, mode: 0o700 });
+  ensureRuntimeDir(cfg.runtimeDir);
 
   for (const url of candidateUrls(cfg)) {
     const version = await probe(url);

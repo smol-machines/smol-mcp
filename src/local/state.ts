@@ -7,10 +7,18 @@
 // every other session's machines, so the first one to close deleted them all.
 // The pid is still recorded, because a name whose process is gone is a name
 // nobody will ever come back for.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { EphemeralStore } from "../machines.js";
+import { ensureRuntimeDir } from "./runtime-dir.js";
+
+export class StateUnreadable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StateUnreadable";
+  }
+}
 
 const StateSchema = z.object({
   // `id` is what the backend's own delete route takes. Locally it is the
@@ -26,17 +34,27 @@ export class StateFile implements EphemeralStore {
     return new StateFile(join(dir, "machines.json"));
   }
 
+  // A record that cannot be read is not an empty record. Answering "no
+  // machines" to a corrupt or replaced file makes every ephemeral machine
+  // unowned and leaves them running for nobody, which is the failure that
+  // costs money and the one nobody would notice.
   read(): State {
     if (!existsSync(this.path)) return { machines: [] };
+    let text: string;
     try {
-      return StateSchema.parse(JSON.parse(readFileSync(this.path, "utf8")));
-    } catch {
-      return { machines: [] };
+      text = readFileSync(this.path, "utf8");
+    } catch (err) {
+      throw new StateUnreadable(`cannot read ${this.path}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      return StateSchema.parse(JSON.parse(text));
+    } catch (err) {
+      throw new StateUnreadable(`${this.path} is not a valid machine record (${err instanceof Error ? err.message.slice(0, 200) : String(err)}). Machines this server created may still be running; list them and delete the file to start a new record.`);
     }
   }
 
   private write(state: State): void {
-    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+    ensureRuntimeDir(dirname(this.path));
     const tmp = `${this.path}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(state, null, 2));
     renameSync(tmp, this.path);

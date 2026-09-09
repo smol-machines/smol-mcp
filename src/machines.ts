@@ -215,7 +215,15 @@ export async function cleanupEphemeral(m: Machines): Promise<{ deleted: string[]
   const deleted: string[] = [];
   const failed: { name: string; error: string }[] = [];
   if (!m.state) return { deleted, failed };
-  for (const { name, id } of m.state.owned(m.session)) {
+  let owned: { name: string; id: string }[];
+  try {
+    owned = m.state.owned(m.session);
+  } catch (err) {
+    // Reported, not swallowed: an unreadable record means machines may be
+    // running that nothing here can name.
+    return { deleted, failed: [{ name: "(the machine record)", error: err instanceof Error ? err.message : String(err) }] };
+  }
+  for (const { name, id } of owned) {
     // The prefix is checked on the name, never on the id: the id is whatever
     // the backend's delete route takes and carries no such marker.
     if (!name.startsWith(m.cfg.machinePrefix)) continue;
