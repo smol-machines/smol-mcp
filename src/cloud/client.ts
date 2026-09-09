@@ -236,7 +236,14 @@ export class CloudClient implements MachineBackend {
     if (opts.overlayGb !== undefined) {
       throw new BackendError("overlayGb is local only: a cloud machine has one disk, sized with storageGb", "UNSUPPORTED");
     }
-
+    // The two are not combined on this target. A caller who wants both is
+    // asking for something this server will not create.
+    if (opts.ports && opts.ports.length > 0 && opts.network.mode === "blocked") {
+      throw new BackendError(
+        `refusing to create ${opts.name} on cloud with a published port and blocked egress: create it with network open, or with an allow-list naming the hosts it needs, or create it with no published port`,
+        "BLOCKED_EGRESS_WITH_PORT",
+      );
+    }
     // No cmd: the cloud create request has no workload field, and a machine
     // here does not need one kept alive because exec auto-starts it.
     //

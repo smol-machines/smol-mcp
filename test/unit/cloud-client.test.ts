@@ -127,6 +127,20 @@ describe("CloudClient", () => {
     ).rejects.toMatchObject({ code: "UNSUPPORTED" });
   });
 
+  it("refuses a published port together with blocked egress, naming both ways out", async () => {
+    seen.length = 0;
+    await expect(
+      client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "blocked" }, ports: [{ guest: 8080 }] }),
+    ).rejects.toMatchObject({ code: "BLOCKED_EGRESS_WITH_PORT", message: expect.stringContaining("network open") });
+    // Refused before the request, so nothing was created and nothing bills.
+    expect(seen).toHaveLength(0);
+    // An allow-list is not the refused combination, and neither is a blocked
+    // machine that publishes nothing.
+    await client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "allow", cidrs: ["203.0.113.0/24"] }, ports: [{ guest: 8080 }] });
+    await client.createMachine({ name: "mcp-x", image: "alpine:3.20", cpus: 1, memoryMb: 256, network: { mode: "blocked" } });
+    expect(seen).toHaveLength(2);
+  });
+
   it("resolves a name to an id before calling a route that takes one", async () => {
     seen.length = 0;
     const m = await client.getMachine("mcp-once-abcd");
