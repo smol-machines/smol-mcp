@@ -41,6 +41,10 @@ export const ConfigSchema = z.object({
   readyTimeoutSecs: z.number().int().positive().default(120),
   serveStartTimeoutSecs: z.number().int().positive().default(60),
   logsTail: z.number().int().positive().default(100),
+  // How often a subscribed log resource is polled for new lines. Neither log
+  // route pushes, so following is a poll; this is the interval between one
+  // poll and the next, per subscribed machine.
+  logsPollSecs: z.number().int().positive().default(2),
   cloudUrl: z.string().default("https://api.smolmachines.com"),
   cloudToken: z.string().default(""),
   // Which targets this process serves, decided once at startup. "auto" is
@@ -91,6 +95,7 @@ const ENV_KEYS: Record<keyof Config, string> = {
   readyTimeoutSecs: "SMOL_MCP_READY_TIMEOUT_SECS",
   serveStartTimeoutSecs: "SMOL_MCP_SERVE_START_TIMEOUT_SECS",
   logsTail: "SMOL_MCP_LOGS_TAIL",
+  logsPollSecs: "SMOL_MCP_LOGS_POLL_SECS",
   cloudUrl: "SMOL_CLOUD_URL",
   cloudToken: "SMOL_CLOUD_TOKEN",
   targets: "SMOL_MCP_TARGETS",

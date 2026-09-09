@@ -41,6 +41,11 @@ On cloud, a command, a read or a write in a stopped machine starts it and
 leaves it running. `startedMachine` in the result says when that happened;
 `stop-machine` stops it again.
 
+Following a log is a resource subscription: read
+`smol://machine/{target}/{name}/logs`, subscribe to it, and the server tells
+you when there is more. `machine-logs` with the cursor from the last call
+returns what has arrived since.
+
 A machine whose name starts with `mcp-` is ephemeral: the session that created
 it records it and deletes it when that session ends, on either target. A name
 you choose yourself persists. The local record is a file in the runtime
@@ -142,6 +147,8 @@ dropping unknown fields is exactly the failure this avoids.
 | ephemeral TTL | `SMOL_MCP_EPHEMERAL_TTL_SECS` | 3600 s | Sent as `ttlSeconds` where the API has one, so a killed server cannot leave a cloud machine billing forever. |
 | ephemeral idle stop | `SMOL_MCP_EPHEMERAL_AUTO_STOP_SECS` | 900 s | Sent as `autoStopSeconds` with `ephemeral: true`, so an abandoned cloud machine stops and is deleted at the first quiet window instead of billing to the TTL. |
 | machine prefix | `SMOL_MCP_MACHINE_PREFIX` | `mcp-` | The marker that makes a machine ephemeral. |
+| log tail | `SMOL_MCP_LOGS_TAIL` | 100 lines | What `machine-logs` returns when no cursor is given. |
+| log poll | `SMOL_MCP_LOGS_POLL_SECS` | 2 s | How often a subscribed log resource is checked for new lines. Neither log route pushes, so following is a poll. |
 | HTTP bind | `SMOL_MCP_HTTP_HOST` | `127.0.0.1` | HTTP transport only. Publishing the listener is a decision, not a default. |
 | HTTP port | `SMOL_MCP_HTTP_PORT` | 8080 | HTTP transport only. What a smol machine publishes by default. |
 | HTTP path | `SMOL_MCP_HTTP_PATH` | `/mcp` | HTTP transport only. Everything else on the listener is a 404. |

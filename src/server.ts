@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { CallCtx, MachineBackend, MachineView } from "./backend.js";
@@ -23,6 +24,18 @@ import { commandResultOutput, machineOutput, toolDescriptions, toolInputs } from
 import type { ToolName } from "./tools.js";
 
 export const SERVER_VERSION = "0.1.0";
+
+export const LOGS_URI_TEMPLATE = "smol://machine/{target}/{name}/logs";
+
+export function logsUri(target: string, name: string): string {
+  return new UriTemplate(LOGS_URI_TEMPLATE).expand({ target, name });
+}
+
+// The target out of a matched URI. A template variable is a string or a list
+// of them, and only one of the two values names a fleet.
+function targetOf(vars: Record<string, unknown>): "local" | "cloud" {
+  return String(vars.target) === "cloud" ? "cloud" : "local";
+}
 
 export interface SmolMcp {
   server: McpServer;
@@ -176,6 +189,64 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
     },
   );
 
+  // A machine's log as a resource, and following it as a subscription to
+  // that resource. Neither log route pushes, so the following is a poll on
+  // this side; what the client sees is the shape it already has for a thing
+  // that changes, rather than a tool it has to call in a loop.
+  server.server.registerCapabilities({ resources: { subscribe: true } });
+  server.registerResource(
+    "machine-logs",
+    new ResourceTemplate(LOGS_URI_TEMPLATE, { list: undefined }),
+    { title: "A machine's log", description: "The tail of a machine's log. Subscribe to be told when there is more.", mimeType: "text/plain" },
+    async (uri, vars) => {
+      const page = await ops.logs(await pick(targetOf(vars)), String(vars.name), {});
+      return { contents: [{ uri: uri.href, mimeType: "text/plain", text: page.lines.join("\n") }] };
+    },
+  );
+
+  // One poll per subscribed machine, cleared when the last subscriber goes
+  // and when the connection closes; a timer left running holds a machine
+  // reference and, on the cloud target, keeps paying for calls nobody reads.
+  const followers = new Map<string, { timer: NodeJS.Timeout; cursor: string }>();
+  const stopFollowing = (uri: string) => {
+    const f = followers.get(uri);
+    if (f === undefined) return;
+    clearInterval(f.timer);
+    followers.delete(uri);
+  };
+  server.server.setRequestHandler(SubscribeRequestSchema, async (req) => {
+    const uri = req.params.uri;
+    const vars = new UriTemplate(LOGS_URI_TEMPLATE).match(uri);
+    if (vars === null) throw new BackendError(`${uri} is not a machine log resource`, "NOT_SUBSCRIBABLE");
+    if (followers.has(uri)) return {};
+    const machines = await pick(targetOf(vars));
+    const name = String(vars.name);
+    const first = await ops.logs(machines, name, {});
+    const timer = setInterval(() => {
+      void (async () => {
+        const held = followers.get(uri);
+        if (held === undefined) return;
+        try {
+          const page = await ops.logs(machines, name, { cursor: held.cursor });
+          held.cursor = page.cursor;
+          if (page.lines.length > 0) await server.server.sendResourceUpdated({ uri });
+        } catch (err) {
+          // A machine that went away is not a reason to keep polling it.
+          log(`stopped following ${uri}: ${err instanceof Error ? err.message : String(err)}`);
+          stopFollowing(uri);
+        }
+      })();
+    }, cfg.logsPollSecs * 1000);
+    // The poll must not be the reason this process stays alive.
+    timer.unref?.();
+    followers.set(uri, { timer, cursor: first.cursor });
+    return {};
+  });
+  server.server.setRequestHandler(UnsubscribeRequestSchema, (req) => {
+    stopFollowing(req.params.uri);
+    return {};
+  });
+
   registered["list-machines"] = server.registerTool("list-machines", { description: toolDescriptions["list-machines"], inputSchema: inputs["list-machines"], outputSchema: { machines: z.array(z.object(machineOutput)) } }, async (a, extra) => {
     try {
       const list = await (await pick(a.target)).backend.listMachines(ctxOf(extra));
@@ -320,6 +391,12 @@ export async function createServer(opts: CreateServerOptions): Promise<SmolMcp> 
       log(`session target elicited: ${answer}; the target argument is now off every tool`);
     })();
     return asked;
+  };
+
+  const previousClose = server.server.onclose;
+  server.server.onclose = () => {
+    for (const uri of [...followers.keys()]) stopFollowing(uri);
+    previousClose?.();
   };
 
   let shutdownOnce: Promise<{ deleted: string[]; failed: { name: string; error: string }[] }> | undefined;

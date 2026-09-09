@@ -6,7 +6,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ElicitRequestSchema, ResourceUpdatedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { applyArgs, startHttpTransport } from "../../src/http-transport.js";
 import type { HttpTransportHandle } from "../../src/http-transport.js";
@@ -228,6 +228,35 @@ describe("http transport", () => {
     // And the link resolves through this same server.
     const read = await client.readResource({ uri: String(link?.uri) });
     expect(readText(read)).toHaveLength(5000);
+    await transport.close();
+  });
+
+  it("serves a machine's log as a resource and tells a subscriber when there is more", async () => {
+    const { backend, url } = await start({ logsPollSecs: 1 });
+    backend.logLines = ["boot", "ready"];
+    const { client, transport } = await connect(url);
+    const uri = "smol://machine/local/mcp-a/logs";
+
+    const read = await client.readResource({ uri });
+    expect(readText(read)).toBe("boot\nready");
+
+    const updated: string[] = [];
+    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (n) => {
+      updated.push(n.params.uri);
+    });
+    await client.subscribeResource({ uri });
+    // Nothing new yet, so no notification: a follower that is told the log
+    // changed every second learns nothing from being told.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(updated).toEqual([]);
+
+    backend.logLines = [...backend.logLines, "a new line"];
+    await expect.poll(() => updated, { timeout: 5000 }).toEqual([uri]);
+
+    await client.unsubscribeResource({ uri });
+    backend.logLines = [...backend.logLines, "and another"];
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(updated).toEqual([uri]);
     await transport.close();
   });
 
