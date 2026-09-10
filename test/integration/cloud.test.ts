@@ -84,7 +84,11 @@ suite("cloud lifecycle", () => {
     expect(failed.stderr).toBe("to-err\n");
 
     const payload = Buffer.from(`cloud-payload-${name}\n`);
-    expect(await ops.writeFile(m, name, "/root/it.txt", payload)).toEqual({ path: "/root/it.txt", size: payload.length });
+    // The machine is running by now, so `startedMachine` is false and saying so
+    // is the point: this assertion was written before write-file reported it and
+    // went stale unnoticed, because the cloud suite only runs when a key is on
+    // hand. It was the whole of what the 2026-09-09 final round found here.
+    expect(await ops.writeFile(m, name, "/root/it.txt", payload)).toEqual({ path: "/root/it.txt", size: payload.length, startedMachine: false });
     expect((await ops.runCommand(m, name, { command: ["cat", "/root/it.txt"] })).stdout).toBe(payload.toString());
     expect((await m.backend.readFile(name, "/root/it.txt")).toString()).toBe(payload.toString());
 
