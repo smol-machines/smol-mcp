@@ -123,9 +123,15 @@ suite("cloud run-once", () => {
     await assertUnderCeiling();
   });
 
-  it("deletes the machine when the command hangs past its timeout", async () => {
+  it("reports a timeout as a timeout on this target, not as a plain failure", async () => {
+    // This assertion used to be `exitCode !== 0` alone, because nobody knew
+    // how this API spells a timeout and the local spelling was a guess. It
+    // spells it the same way: exit 124 with the marker on stderr, so the one
+    // shaping rule serves both targets.
     const r = await ops.runOnce(m, { image: CLOUD_IMAGE, command: ["sleep", "600"], timeoutSecs: 10, ...SMALL });
-    expect(r.exitCode).not.toBe(0);
+    expect(r.exitCode).toBe(124);
+    expect(r.stderr).toContain("command timed out");
+    expect(r.timedOut).toBe(true);
     expect((await m.backend.listMachines()).map((x) => x.name)).not.toContain(r.machine);
     await assertUnderCeiling();
   });
