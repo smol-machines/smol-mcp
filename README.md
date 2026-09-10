@@ -99,6 +99,22 @@ the control plane's own idle stop and TTL.
 
 ## Install and run
 
+The package is `smol-mcp` on npm, with two bins: `smol-mcp` (stdio) and
+`smol-mcp-http` (Streamable HTTP). A client can run it without installing
+anything:
+
+```bash
+npx -y smol-mcp
+```
+
+or install it once, globally or into a project:
+
+```bash
+npm install -g smol-mcp
+```
+
+From source, for working on it:
+
 ```bash
 git clone https://github.com/smol-machines/smol-mcp
 cd smol-mcp
@@ -112,9 +128,11 @@ first local call rather than at connect, so a client that only ever names
 
 ## Connecting a client
 
-The stdio transport is the default: the client runs `dist/cli.js` and speaks
-MCP on its stdin and stdout. The path has to be absolute, because the client
-does not run it from this directory.
+The stdio transport is the default: the client runs `smol-mcp` and speaks
+MCP on its stdin and stdout. The blocks below use `npx -y smol-mcp`, which
+fetches the package on first use; with a global install the command is
+`smol-mcp` and there are no arguments, and from a source checkout it is `node`
+with the absolute path to `dist/cli.js`.
 
 **Claude Code (`.mcp.json`), Claude Desktop (`claude_desktop_config.json`) and
 Cursor (`.cursor/mcp.json`)** all take the same shape:
@@ -123,8 +141,8 @@ Cursor (`.cursor/mcp.json`)** all take the same shape:
 {
   "mcpServers": {
     "smol": {
-      "command": "node",
-      "args": ["/abs/path/to/smol-mcp/dist/cli.js"],
+      "command": "npx",
+      "args": ["-y", "smol-mcp"],
       "env": { "SMOL_CLOUD_TOKEN": "..." }
     }
   }
@@ -139,7 +157,7 @@ Cursor (`.cursor/mcp.json`)** all take the same shape:
   "mcp": {
     "smol": {
       "type": "local",
-      "command": ["node", "/abs/path/to/smol-mcp/dist/cli.js"],
+      "command": ["npx", "-y", "smol-mcp"],
       "enabled": true,
       "environment": { "SMOL_CLOUD_TOKEN": "..." }
     }
@@ -177,7 +195,7 @@ On B:
 
 ```bash
 SMOL_MCP_AUTH_TOKEN=$(openssl rand -hex 16) \
-  node dist/http-cli.js --host 0.0.0.0 --port 8080 --path /mcp
+  npx -y --package smol-mcp smol-mcp-http --host 0.0.0.0 --port 8080 --path /mcp
 ```
 
 On A, one entry:
@@ -223,14 +241,15 @@ On A, one entry:
 
 Two shapes, both run end to end; see Verified.
 
-**Agent inside the machine.** `npm pack` on this host, upload the tarball
-through `POST /v1/machines/{id}/exec` with the base64 on stdin, `npm install`
-it in the guest, and speak stdio to `dist/cli.js` there. The account key goes
+**Agent inside the machine.** `npm install smol-mcp` in the guest (or `npm pack`
+here and upload the tarball through `POST /v1/machines/{id}/exec` with the
+base64 on stdin, which is how it was first proven), and speak stdio to
+`smol-mcp` there. The account key goes
 in the machine's create-time `env` and is in the guest process environment.
 The local target is unavailable inside a guest and says so on the first call.
 
 **Agent outside the machine.** Publish port 8080 at create, run
-`dist/http-cli.js` on `0.0.0.0`, and connect with the SDK's
+`smol-mcp-http` on `0.0.0.0`, and connect with the SDK's
 `StreamableHTTPClientTransport` to `https://<name>-<hash>.apps.smolmachines.com/mcp`,
 the ingress URL the machine record's `url` field carries once it is ready.
 `get-machine` and `list-machines` report that field, as `url`; it is null on
