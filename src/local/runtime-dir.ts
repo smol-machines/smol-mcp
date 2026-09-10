@@ -17,7 +17,7 @@ export class RuntimeDirRefused extends Error {
   }
 }
 
-export function ensureRuntimeDir(dir: string): void {
+export function ensureRuntimeDir(dir: string, platform: string = process.platform): void {
   try {
     mkdirSync(dirname(dir), { recursive: true });
     mkdirSync(dir, { mode: 0o700 });
@@ -33,6 +33,12 @@ export function ensureRuntimeDir(dir: string): void {
   if (uid !== undefined && stat.uid !== uid) {
     throw new RuntimeDirRefused(`${dir} belongs to uid ${stat.uid} and this process runs as ${uid}; refusing to put a socket in a directory another user owns. Set SMOL_MCP_RUNTIME_DIR to somewhere else.`);
   }
+  // The POSIX mode bits are not a permission model on Windows: node reports
+  // 666 for a directory nobody else can touch, so this check refused every
+  // run there. What it is guarding is also absent, because the serve on that
+  // platform listens on loopback TCP rather than on a socket in this
+  // directory. Access to the directory itself is the ACL's business.
+  if (platform === "win32") return;
   const mode = stat.mode & 0o777;
   if ((mode & 0o077) !== 0) {
     throw new RuntimeDirRefused(`${dir} is mode ${mode.toString(8)} and must be 700: anything that can reach the socket in it can create a machine on this host. Fix the mode, or set SMOL_MCP_RUNTIME_DIR to somewhere else.`);

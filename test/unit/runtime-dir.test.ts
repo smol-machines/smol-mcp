@@ -33,6 +33,17 @@ describe("ensureRuntimeDir", () => {
     expect(() => ensureRuntimeDir(dir)).toThrow(/must be 700/);
   });
 
+  it("does not read POSIX mode bits as a permission model on Windows", () => {
+    // node reports 666 for a directory nobody else can touch there, so this
+    // check refused every run on that platform. The socket it guards does not
+    // exist there either: the serve listens on loopback TCP.
+    const dir = fresh();
+    mkdirSync(dir, { mode: 0o777 });
+    chmodSync(dir, 0o777);
+    expect(() => ensureRuntimeDir(dir, "win32")).not.toThrow();
+    expect(() => ensureRuntimeDir(dir, "darwin")).toThrow(/must be 700/);
+  });
+
   it("refuses a path that is not a directory", () => {
     const dir = fresh();
     mkdirSync(join(dir, ".."), { recursive: true });
