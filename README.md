@@ -65,12 +65,24 @@ the control plane's own idle stop and TTL.
 ## Install and run
 
 ```bash
+git clone https://github.com/smol-machines/smol-mcp
+cd smol-mcp
 npm install
 npm run build
-node dist/cli.js          # speaks MCP on stdin/stdout
 ```
 
-As an MCP server entry:
+`smolvm` is only needed for the local target, and the serve is started on the
+first local call rather than at connect, so a client that only ever names
+`cloud` never launches a hypervisor.
+
+## Connecting a client
+
+The stdio transport is the default: the client runs `dist/cli.js` and speaks
+MCP on its stdin and stdout. The path has to be absolute, because the client
+does not run it from this directory.
+
+**Claude Code (`.mcp.json`), Claude Desktop (`claude_desktop_config.json`) and
+Cursor (`.cursor/mcp.json`)** all take the same shape:
 
 ```json
 {
@@ -84,9 +96,36 @@ As an MCP server entry:
 }
 ```
 
-`smolvm` is only needed for the local target. The serve is started on the
-first local call, not at connect, so a client that only ever names `cloud`
-never launches a hypervisor.
+**OpenCode (`opencode.json`)** uses its own key names:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "smol": {
+      "type": "local",
+      "command": ["node", "/abs/path/to/smol-mcp/dist/cli.js"],
+      "enabled": true,
+      "environment": { "SMOL_CLOUD_TOKEN": "..." }
+    }
+  }
+}
+```
+
+The top-level key is `mcp` rather than `mcpServers`, a local server is
+`type: "local"`, the command and its arguments are one array, and the
+environment is `environment` rather than `env`.
+
+Drop `SMOL_CLOUD_TOKEN` and the server serves the local fleet only. Keep it
+and it serves both, and asks once which one the session is for; see the target
+modes below.
+
+**What has actually been driven end to end is the MCP SDK's own `Client`**,
+over both transports, by the two scripts in `scripts/`. The four client
+configurations above are read from each client's documentation and not driven:
+the OpenCode shape is from its MCP servers page as it stood on 2026-09-09,
+against `opencode-ai` 1.18.30 on npm, with no OpenCode installed on the host
+that wrote this.
 
 ## Running the server somewhere else
 
