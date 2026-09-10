@@ -108,13 +108,30 @@ describe("http transport", () => {
 
   it("serves the whole tool vocabulary and runs a call against the backend", async () => {
     const { backend, url } = await start();
-    backend.machines.set("mcp-a", { id: "mcp-a", name: "mcp-a", state: "running", cpus: 2, memoryMb: 2048, network: "open", createdAt: 1, image: "alpine", pid: 1 });
+    backend.machines.set("mcp-a", { id: "mcp-a", name: "mcp-a", state: "running", cpus: 2, memoryMb: 2048, network: "open", createdAt: 1, image: "alpine", pid: 1, url: null });
     const { client, transport } = await connect(url);
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain("list-machines");
     expect(names).toHaveLength(13);
     const res = await client.callTool({ name: "list-machines", arguments: { target: "local" } });
     expect(res.structuredContent).toEqual({ machines: [expect.objectContaining({ name: "mcp-a" })] });
+    await transport.close();
+  });
+
+  it("shows a machine's ingress url, which is how anything it publishes is reached", async () => {
+    // The server rebuilds the view field by field on its way out, and url was
+    // not in that list, so a machine hosting a server behind an ingress looked
+    // unreachable through every tool that reports a machine. Asserting the
+    // value rather than the key: an undefined url passes output validation
+    // nowhere, but a wrong one would pass a presence check.
+    const { backend, url } = await start();
+    const ingress = "https://mcp-a-1a2b3c.apps.smolmachines.com";
+    backend.machines.set("mcp-a", { id: "mcp-a", name: "mcp-a", state: "running", cpus: 2, memoryMb: 2048, network: "open", createdAt: 1, image: "alpine", pid: 1, url: ingress });
+    const { client, transport } = await connect(url);
+    const got = await client.callTool({ name: "get-machine", arguments: { target: "local", name: "mcp-a" } });
+    expect(got.structuredContent).toMatchObject({ name: "mcp-a", url: ingress });
+    const listed = await client.callTool({ name: "list-machines", arguments: { target: "local" } });
+    expect((listed.structuredContent as { machines: { url: string }[] }).machines[0]?.url).toBe(ingress);
     await transport.close();
   });
 

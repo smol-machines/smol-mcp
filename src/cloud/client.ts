@@ -24,6 +24,7 @@ export const CloudMachineSchema = z.looseObject({
   resources: z.looseObject({ cpus: z.number().nullish(), memoryMb: z.number().nullish() }).nullish(),
   network: CloudNetworkSchema.nullish(),
   createdAt: z.string(),
+  url: z.string().nullish(),
 });
 export type CloudMachine = z.infer<typeof CloudMachineSchema>;
 
@@ -99,6 +100,7 @@ export function cloudView(m: CloudMachine): MachineView {
     createdAt: Number.isNaN(created) ? 0 : Math.floor(created / 1000),
     image: m.source?.reference ?? null,
     pid: null,
+    url: m.url ?? null,
   };
 }
 

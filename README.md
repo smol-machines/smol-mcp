@@ -234,6 +234,8 @@ The local target is unavailable inside a guest and says so on the first call.
 `dist/http-cli.js` on `0.0.0.0`, and connect with the SDK's
 `StreamableHTTPClientTransport` to `https://<name>-<hash>.apps.smolmachines.com/mcp`,
 the ingress URL the machine record's `url` field carries once it is ready.
+`get-machine` and `list-machines` report that field, as `url`; it is null on
+the local target and until something listens on the published port.
 This shape needs open egress anyway, to reach the smol cloud API.
 
 ## A worked example

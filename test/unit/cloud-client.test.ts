@@ -375,6 +375,17 @@ describe("cloud shape helpers", () => {
     expect(toCloudNetwork({ mode: "allow", cidrs: ["1.1.1.1/32"], hosts: ["example.com"] })).toEqual({ mode: "allowCidrs", cidrs: ["1.1.1.1/32", "example.com"] });
   });
 
+  it("carries the ingress url, which is the address of anything the machine publishes", () => {
+    // The README tells a reader to reach a server hosted in a machine at "the
+    // ingress URL the machine record's url field carries once it is ready".
+    // The view dropped that field, so no tool could show it and the documented
+    // hosted shape had no way to be found; the 2026-09-09 round hit exactly
+    // that and had to read the record with curl.
+    expect(cloudView({ ...machine, url: "https://example-1a2b.apps.smolmachines.com" }).url).toBe("https://example-1a2b.apps.smolmachines.com");
+    expect(cloudView({ ...machine, url: null }).url).toBeNull();
+    expect(cloudView(machine).url).toBeNull();
+  });
+
   it("turns an ISO createdAt into epoch seconds and falls back to the id for a nameless machine", () => {
     expect(cloudView({ ...machine, createdAt: "2026-09-08T14:47:37Z" }).createdAt).toBe(1788878857);
     expect(cloudView({ ...machine, name: null }).name).toBe(ID);

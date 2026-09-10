@@ -82,8 +82,11 @@ function ctxOf(extra: { signal?: AbortSignal }): CallCtx {
   return { signal: extra.signal };
 }
 
+// Field by field, so a backend that grows a field does not leak it through a
+// tool result unreviewed. `url` is listed here because it is the one an agent
+// needs: it is how a published port is reached.
 function machineView(m: MachineView) {
-  return { id: m.id, name: m.name, state: m.state, cpus: m.cpus, memoryMb: m.memoryMb, network: m.network, createdAt: m.createdAt, image: m.image, pid: m.pid };
+  return { id: m.id, name: m.name, state: m.state, cpus: m.cpus, memoryMb: m.memoryMb, network: m.network, createdAt: m.createdAt, image: m.image, pid: m.pid, url: m.url };
 }
 
 export interface CreateServerOptions {

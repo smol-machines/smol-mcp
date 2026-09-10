@@ -35,6 +35,7 @@ export function localView(m: MachineInfo): MachineView {
     createdAt: m.createdAt,
     image: null,
     pid: m.pid ?? null,
+    url: null,
   };
 }
 

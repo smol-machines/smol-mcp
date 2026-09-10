@@ -31,6 +31,9 @@ export interface MachineView {
   createdAt: number;
   image: string | null;
   pid: number | null;
+  // The address a published port is reachable at. Cloud only, and null until
+  // something listens on the port; a local machine's ports are on the host.
+  url: string | null;
 }
 
 // A published guest port. `host` is the port on the host that forwards to it

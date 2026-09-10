@@ -61,6 +61,10 @@ describe("LocalClient parsing", () => {
     expect(list).toHaveLength(1);
     expect(list[0]?.name).toBe("a");
     expect(list[0]?.pid).toBe(7);
+    // Null rather than absent: a local machine's published ports are on the
+    // host, so there is no ingress address, and saying so keeps the field
+    // meaningful on the target that does have one.
+    expect(list[0]?.url).toBeNull();
   });
 
   it("sends the schema's field names on create: network and memoryMb, never net or memory (constraint d)", async () => {

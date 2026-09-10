@@ -21,7 +21,7 @@ export class FakeBackend implements MachineBackend {
   idFor: (name: string) => string = (name) => name;
 
   private info(name: string, state: string): MachineView {
-    return { id: this.idFor(name), name, state, cpus: 2, memoryMb: 2048, network: "open", createdAt: 1700000000, image: "alpine", pid: state === "running" ? 4242 : null };
+    return { id: this.idFor(name), name, state, cpus: 2, memoryMb: 2048, network: "open", createdAt: 1700000000, image: "alpine", pid: state === "running" ? 4242 : null, url: null };
   }
   async listMachines() {
     this.calls.push({ op: "list" });

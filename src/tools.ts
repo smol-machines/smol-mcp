@@ -140,6 +140,7 @@ export const machineOutput = {
   createdAt: z.number(),
   image: z.string().nullable(),
   pid: z.number().nullable(),
+  url: z.string().nullable(),
 };
 
 // The hints the MCP spec defines, so a client can decide what to confirm and
