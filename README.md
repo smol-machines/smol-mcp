@@ -155,12 +155,11 @@ Drop `SMOL_CLOUD_TOKEN` and the server serves the local fleet only. Keep it
 and it serves both, and asks once which one the session is for; see the target
 modes below.
 
-**What has actually been driven end to end is the MCP SDK's own `Client`**,
-over both transports, by the two scripts in `scripts/`. The four client
-configurations above are read from each client's documentation and not driven:
-the OpenCode shape is from its MCP servers page as it stood on 2026-09-09,
-against `opencode-ai` 1.18.30 on npm, with no OpenCode installed on the host
-that wrote this.
+**What has been driven end to end is the MCP SDK's own `Client`**, over both
+transports, by the two scripts in `scripts/`, **and OpenCode 1.18.30**, which
+ran the worked example below over stdio and a machine on another host over
+HTTP, from the `opencode.json` printed above with no changes. The other three
+configurations are read from each client's documentation and not driven.
 
 ## Two computers: the agent here, the machines there
 
@@ -524,38 +523,78 @@ deletes what it makes in the test that makes it, and its `afterAll` asserts no
 
 ## Verified
 
-What was actually run, on what, rather than what should work.
+What was actually run, on what, rather than what should work. Everything below
+is from one round on 2026-09-09 and 2026-09-10, on the tree this section ships
+with.
+
+**Three hosts.** A Mac on Apple Silicon (node 25.9.0), a Windows 11 laptop
+(build 10.0.26200.0, node 24.19.0), and Ubuntu 24.04 aarch64 in a Lima VM with
+`/dev/kvm` (node 20.19.5). `smolvm` **1.14.5** on all three, from the
+darwin-arm64, windows-x86_64 and linux-arm64 release archives.
 
 **Keyless, on any host.** `npm run lint`, `npm run typecheck` and
-`npm run test:unit`: 10 files, 163 tests, all passing. Those three are also
-the whole CI gate, because the integration suites need a hypervisor and an
+`npm run test:unit`: 11 files, 173 tests passing, 14 skipped. Identical counts
+on macOS and on Linux, and within half a second on the clock. Those three are
+also the whole CI gate, because the integration suites need a hypervisor and an
 account and neither belongs on a pull request.
 
-**Local, on real machines.** `smolvm` **1.14.5** on macOS on Apple Silicon,
-node 25, from an isolated `HOME`. `SMOL_MCP_IT=1 npm run test:integration`
-runs the lifecycle, parity, truncation, egress-refusal and run-once cases plus
-the stdio EOF suite: 2 files, 10 passing, the cloud file skipped. A real MCP
-client over stdio (`scripts/smoke.mjs local`) listed all thirteen tools and
-ran a command. The worked example above is a real run, pasted back. The branch
-flow was run end to end: a machine created `branchable`, a file written into
-it, `branch-machine` into a child in 0.4 s against 2.7 s for a create, the
-child reading the parent's file, and a non-branchable source refused with the
-API's own message.
+**Local, on real machines.** `SMOL_MCP_IT=1 npm run test:integration` from an
+isolated `HOME`: 10 passing, the cloud file skipped, on macOS in 23 s and on
+Linux under Lima in 167 s, the same tests either way. `scripts/smoke.mjs local`
+listed all thirteen tools and ran a command on both. The worked example above
+is a real run, pasted back, and a model driving a real MCP client ran the same
+five calls unaided. The branch flow was run end to end on macOS: a machine
+created `branchable`, a file written into it, `branch-machine` into a child in
+0.4 s against 2.7 s for a create, the child reading the parent's file, and a
+non-branchable source refused with the API's own message.
 
-**Cloud, against the live API.** Driven through this server over stdio with
-`SMOL_MCP_TARGETS=cloud`: a create with a published port and open egress, the
-blocked-plus-port combination refused before anything was sent, `write-file`
-and `read-file` through the documented files route, `branch-machine` into a
-child that read the parent's file, and `machine-logs` from the events route
-with the cursor coming back empty on the second call. Every machine was
-deleted in the same run and `GET /v1/machines` was empty afterwards. The whole
-exercise ran on the smallest billable shape and cost small change; the cloud
-suite reads the account before it creates anything and stops at its own spend
-ceiling rather than slowing down.
+**Windows.** The local target works there: this server starts `smolvm serve`
+on loopback TCP, boots Linux microVMs and runs commands, files and logs in
+them, driven both from a client on the same box and from another computer.
+`branch-machine` is refused there with the reason, because a machine started
+branchable on that platform has no control socket to branch from.
 
-**Not verified.** The HTTP transport has unit coverage against a real listener
-but was not run between two hosts, and the four client configurations above
-are read from each client's documentation rather than driven. Cloud
+**Two computers over wifi, both directions.** The Windows laptop serving and
+the Mac driving it, then the Mac serving and the laptop driving it. On the
+same runs: a request with no token and a request with a wrong token both
+refused with the same 401, including on a path that is not the endpoint, so
+the endpoint is not revealed to an unauthenticated caller; a `Host` outside the
+allow-list refused with 403; a session idle past
+`SMOL_MCP_HTTP_SESSION_IDLE_SECS` closed and its machine deleted, while a
+session holding a 70 s call through the same limit returned its output and
+stayed usable; and `netstat` on the serving host showed `smolvm` bound to
+loopback only, with the MCP port the single listener on the LAN address.
+
+**A real client, driven headless.** OpenCode **1.18.30**, configured exactly as
+the `opencode.json` above, ran the worked example over stdio and a
+create-plus-run-plus-delete against the Windows laptop over HTTP with the
+bearer header. Both were tool calls a model chose from the schemas, not
+scripted requests.
+
+**The package.** `npm pack` gives an 87781 byte tarball carrying `dist`,
+`LICENSE`, `README.md` and `package.json` and nothing from `src` or `test`.
+Installed into a clean directory on macOS and on Windows, both bins in
+`node_modules/.bin` serve all thirteen tools and boot a real machine.
+
+**Cloud, against the live API.** `SMOL_MCP_IT=1 npm run test:cloud`: 4 passing,
+26 micros of spend, nothing left on the fleet. Driven through this server over
+stdio with `SMOL_MCP_TARGETS=cloud`: a create with a published port and open
+egress, the blocked-plus-port combination refused before anything was sent,
+`write-file` and `read-file` through the documented files route,
+`branch-machine` into a child that read the parent's file, and `machine-logs`
+from the events route with the cursor coming back empty on the second call.
+The hosted shape above was rebuilt and driven: this server installed into a
+cloud machine through its own `write-file`, serving on a published port, with
+a client on the Mac creating, running a command in and deleting a second
+machine through the ingress URL. Every machine was deleted and
+`GET /v1/machines` was empty afterwards; the whole cloud half cost 449 micros.
+
+**Not verified.** Claude Code, Claude Desktop and Cursor were not driven: their
+configurations above are read from each client's documentation, and the three
+`claude` runs attempted here never reached the server because that CLI had no
+usable login on the host. The browser `Origin` gate was exercised only with
+`SMOL_MCP_HTTP_ALLOWED_ORIGINS` empty, where a request carrying an origin is
+accepted, which is what that setting means and not a test of refusing. Cloud
 checkpoints failed on the service side and no tool ships for them; see what
 this server does not expose.
 
