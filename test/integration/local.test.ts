@@ -28,13 +28,19 @@ afterAll(async () => {
 
 suite("local parity", () => {
   // Constraint (c): the spec's info.version is hardcoded at 0.5.2 on a
-  // v1.14.3 binary, so parity is stated by the paths this server calls.
-  it("calls only paths the running binary serves, and does not trust info.version", () => {
+  // v1.14.5 binary, so parity is stated by the paths this server calls.
+  it("calls only paths the running binary serves, and rules on every path it does not", () => {
     const cfg = itConfig();
     const spec: unknown = JSON.parse(execFileSync(cfg.smolvm, ["serve", "openapi"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }));
     const report = checkParity(spec);
     expect(report.missing).toEqual([]);
     expect(report.present.length).toBeGreaterThan(10);
+    // Nothing the binary serves is unaccounted for. A route added in a
+    // release lands here, which is the whole point of the override table:
+    // a new capability should be a decision, not an omission nobody noticed.
+    expect(report.unknown).toEqual([]);
+    expect(report.skipped.length).toBeGreaterThan(10);
+    for (const s of report.skipped) expect(s.why.length, s.route).toBeGreaterThan(20);
     // The number that must never be used as the parity claim.
     expect(report.specVersion).toBe("0.5.2");
   });

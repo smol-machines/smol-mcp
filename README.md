@@ -238,6 +238,53 @@ reserved for documentation and routed nowhere. A cloud machine that publishes
 a port cannot also block egress, and `create-machine` refuses that
 combination rather than sending it.
 
+## What this server does not expose
+
+Both APIs are larger than this tool vocabulary. Everything below is a
+deliberate omission with a reason, and `src/parity.ts` carries the same list
+as data: the parity check reports each skipped route with its reason and
+reports anything in neither list as `unknown`, so a capability added in a
+release shows up as a decision to make rather than an omission nobody noticed.
+
+**The tools are hand written and not generated from either spec**, because
+three published entries do not describe the running service: the cloud
+snapshot route is documented as a 200 and answers 501, the cloud export entry
+carries no request body at all, and the local spec has no checkpoint route
+while the product has the feature. The published cloud OpenAPI also lists
+neither the fork route nor the checkpoint routes, and both exist and answer.
+
+### Local, against `smolvm serve openapi` on v1.14.5
+
+| Not exposed | Why |
+|---|---|
+| export | Needs a `pushToken` that the spec itself describes as minted by the control plane, so a local user cannot produce one. |
+| checkpoint | Absent from the local spec entirely. It also restores only on the same OS and architecture, and macOS restore with host mounts has an open defect. |
+| branch release | Releases a held fork-pool slot; this server has no pool vocabulary. |
+| sync | Synchronises staged mounts without stopping the machine; mounts here are a create-time argument. |
+| resize | Expand only, and no tool asks for a machine to grow after it exists. |
+| `exec/stream` | Exec results are returned whole, not streamed. |
+| fork pools, rollout executors | Fleet and batch surfaces rather than agent ones. |
+
+**Volumes on the local target are the `mounts` argument** on `create-machine`,
+which attaches a host directory. There is no separate volume object.
+
+### Cloud
+
+| Not exposed | Why |
+|---|---|
+| export | The spec entry has no request body and nothing anywhere tests it, so there is no shape to code against. |
+| snapshot | Documented as a 200 and answers 501, telling the caller to export instead. Never call it. |
+| volumes | Not built on the service. |
+| checkpoints | All four routes exist. On 2026-09-09, capture answered 502 three times with a libkrun permission error in the node's checkpoint staging directory, and delete answered 502 on storage cleanup. No tool ships until the service side works. |
+| fork batch, lineage | Batch branching and branch ancestry, which this vocabulary does not express. |
+| sessions | A session keeps a working directory and environment across execs; `run-command` is one shot. |
+| code | A code-oriented surface with no counterpart on the local target. |
+| connect | The authenticated bridge answers `GET` and `HEAD` only, so no MCP client can speak through it. Use the machine's ingress URL. |
+
+Exec results are returned whole on both targets. Output past the budget keeps
+its head and its tail and the whole stream is written back into the machine,
+which the result names; nothing streams a command as it runs.
+
 ## Constraints this server is built around
 
 Each one has a test.
