@@ -136,6 +136,92 @@ The local target is unavailable inside a guest and says so on the first call.
 the ingress URL the machine record's `url` field carries once it is ready.
 This shape needs open egress anyway, to reach the smol cloud API.
 
+## A worked example
+
+An agent borrowing a machine to check out a repository, run its tests, read
+the result and take a generated file away. Five calls, on the local target,
+run exactly as shown against `smolvm` 1.14.5 and pasted back verbatim.
+
+**1. A machine.** `network: "open"` because the image is pulled from a
+registry and that pull happens inside the guest; see the egress section below.
+
+```
+$ create-machine {"target":"local","name":"mcp-walkthrough","image":"python:3.12-alpine","cpus":2,"memoryMb":1024,"network":"open"}   [3.1s]
+{
+  "machine": { "id": "mcp-walkthrough", "name": "mcp-walkthrough", "state": "running",
+               "cpus": 2, "memoryMb": 1024, "network": "open", "pid": 36349 },
+  "ephemeral": true,
+  "ready": true
+}
+```
+
+`ready: true` means a command has already run in it, so the next call does not
+have to wait for the guest.
+
+**2. Check out the work.**
+
+```
+$ run-command {"target":"local","name":"mcp-walkthrough","command":"apk add --no-cache git >/dev/null && pip install --quiet pytz && git clone --depth 1 --quiet https://github.com/dbader/schedule /workspace/schedule && echo cloned","timeoutSecs":120}   [3.3s]
+{
+  "stdout": "cloned\n",
+  "stderr": "WARNING: Running pip as the 'root' user can result in broken permissions ...",
+  "exitCode": 0,
+  "truncated": false,
+  "timedOut": false,
+  "overflow": [],
+  "startedMachine": false
+}
+```
+
+`exitCode` comes from the guest: a failing command is a result, not a tool
+error, so the agent reads the code rather than catching an exception.
+
+**3. Run the tests, keeping a report in the machine.**
+
+```
+$ run-command {"target":"local","name":"mcp-walkthrough","command":"cd /workspace/schedule && python -m unittest test_schedule 2>&1 | tee /workspace/report.txt | tail -3","timeoutSecs":120}   [0.2s]
+{
+  "stdout": "Ran 81 tests in 0.020s\n\nOK\n",
+  "stderr": "",
+  "exitCode": 0,
+  "truncated": false,
+  "timedOut": false,
+  "overflow": [],
+  "startedMachine": false
+}
+```
+
+**4. Take the generated file.**
+
+```
+$ read-file {"target":"local","name":"mcp-walkthrough","path":"/workspace/report.txt"}   [0.0s]
+{
+  "path": "/workspace/report.txt",
+  "content": ".....................................................................\n---------------------------------------------------------------\nRan 81 tests in 0.020s\n\nOK\n",
+  "encoding": "utf8",
+  "size": 180,
+  "offset": 0,
+  "bytes": 180,
+  "eof": true,
+  "startedMachine": false
+}
+```
+
+`size` is the whole file and `bytes` is what this call returned, so `eof: true`
+says there is nothing after it. A bigger file comes back in pages: pass
+`offset` and `length` and read until `eof`.
+
+**5. Give it back.**
+
+```
+$ delete-machine {"target":"local","name":"mcp-walkthrough"}   [0.1s]
+{ "deleted": "mcp-walkthrough" }
+```
+
+The delete is not strictly needed. The name carries the `mcp-` prefix, so the
+machine is ephemeral and the session would have deleted it at exit anyway.
+The whole sequence took 6.7 seconds.
+
 ## Defaults, and why each one is what it is
 
 Settable by env var, or by a JSON config file at
