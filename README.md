@@ -1,16 +1,51 @@
 # smol-mcp
 
-An MCP server over smol machines, on the official TypeScript SDK
-(`@modelcontextprotocol/sdk`, pinned exactly), stdio transport, one tool
-vocabulary for two targets.
+An MCP server for [smol machines](https://smolmachines.com): it gives an AI
+agent a virtual machine to work in. The agent creates a machine from an OCI
+image, runs commands in it, reads and writes files, branches it, tails its log
+and deletes it, all through the tools its client already knows how to call.
 
-Every tool takes a `target` argument:
+**Who it is for.** Anyone running an agent that should not run commands on the
+laptop it is running on. The machine is a real microVM, not a container on
+your host, and every command a tool executes goes through the machine API into
+a guest; this server spawns exactly one host process, `smolvm serve`, and only
+when a local tool is called.
 
-- `local` talks to `smolvm serve`'s HTTP API on this host. The server starts
-  the serve itself and stops it on exit, or uses one that is already listening
-  and leaves it running.
-- `cloud` talks to the smol cloud REST API at `$SMOL_CLOUD_URL` with
-  `Authorization: Bearer $SMOL_CLOUD_TOKEN`.
+Built on the official TypeScript SDK (`@modelcontextprotocol/sdk`, pinned
+exactly), with two transports, stdio and Streamable HTTP.
+
+## The two targets, and the three modes
+
+Machines come from one of two fleets:
+
+- **`local`** is `smolvm serve` on the host this server runs on, reached over
+  a Unix socket. It needs `smolvm` and a hypervisor. Nothing is billed.
+- **`cloud`** is the smol cloud REST API at `$SMOL_CLOUD_URL`, with
+  `Authorization: Bearer $SMOL_CLOUD_TOKEN`. Machines run in the service, and
+  they cost money for as long as they exist.
+
+**Which of them a process serves is decided once, at startup**, from
+`SMOL_MCP_TARGETS` or, when that is unset, from whether a cloud token is
+configured:
+
+| Mode | When | What the tools look like |
+|---|---|---|
+| `local` | no cloud token, or `SMOL_MCP_TARGETS=local` | No `target` argument anywhere. Every call goes to the local fleet. |
+| `cloud` | `SMOL_MCP_TARGETS=cloud` | No `target` argument anywhere. Every call goes to the cloud fleet. |
+| `both` | a cloud token is configured, or `SMOL_MCP_TARGETS=both` | `target` is required on every tool, with no default. |
+
+There is no default in `both` mode on purpose: a machine on one fleet is
+invisible on the other and the two bill differently, so a defaulted argument
+sends work to the wrong fleet silently. **A client that supports elicitation is
+asked once**, on its first tool call, which fleet the session is for; an answer
+of `local` or `cloud` narrows the session and removes the argument from every
+tool, which the server reports as a `tools/listChanged`. A client without
+elicitation, or one that declines, keeps the required argument.
+
+The server also carries an `instructions` string naming the fleets this
+process reaches and what each cannot do, and a `smol://targets` resource with
+the same facts as JSON, including whether a served fleet is usable on this
+host at all.
 
 The two APIs agree about almost nothing. A machine is a name locally and a
 `mach-...` id on cloud; the image is a string locally and a tagged `source`
@@ -26,10 +61,10 @@ shape whichever target answers it.
 |---|---|---|
 | `list-machines` | local, cloud | |
 | `get-machine` | local, cloud | Cloud resolves a name to an id with one extra list call. |
-| `create-machine` | local, cloud | Starts the machine and waits until commands run in it. Publishes ports and sizes the disk on both targets; `mounts` and `overlayGb` are local only. |
-| `run-command` | local, cloud | Returns `{stdout, stderr, exitCode, truncated, timedOut, startedMachine}`. |
+| `create-machine` | local, cloud | Starts the machine and waits until commands run in it. `ports` and `storageGb` on both targets, `mounts` and `overlayGb` local only, `branchable` to make it a branch source. |
+| `run-command` | local, cloud | Returns `{stdout, stderr, exitCode, truncated, timedOut, overflow, startedMachine}`. Output past the budget keeps its head and its tail, and the whole stream is written into the machine at the path `overflow` names. |
 | `run-once` | local, cloud | Create, start, exec, delete. Deletes the machine even on timeout. |
-| `read-file` | local, cloud | |
+| `read-file` | local, cloud | Takes `offset` and `length`; reports the whole file's `size`, the `bytes` returned and whether it reached `eof`. |
 | `write-file` | local, cloud | Waits for readiness first, so the file is not written under a mount that later hides it. |
 | `start-machine` | local, cloud | Starts a stopped machine and waits until commands run in it. |
 | `branch-machine` | local, cloud | Copies a running branchable machine into a new child, memory and disks included. Local needs Linux or macOS, not Windows. |
@@ -127,15 +162,37 @@ the OpenCode shape is from its MCP servers page as it stood on 2026-09-09,
 against `opencode-ai` 1.18.30 on npm, with no OpenCode installed on the host
 that wrote this.
 
-## Running the server somewhere else
+## Two computers: the agent here, the machines there
 
-The same eleven tools are served over the official SDK's Streamable HTTP
+The supported shape for an agent on computer A driving machines on computer B
+is to run this server **on B**, the machine that has `smolvm`, and connect to
+it over the HTTP transport. The local machine API has no authentication of its
+own and stays on a Unix socket on B; what crosses the network is this server's
+own authenticated endpoint.
+
+The same thirteen tools are served over the official SDK's Streamable HTTP
 transport by a second bin. stdio is the default and is untouched by it: no
 port, no token, no listener.
+
+On B:
 
 ```bash
 SMOL_MCP_AUTH_TOKEN=$(openssl rand -hex 16) \
   node dist/http-cli.js --host 0.0.0.0 --port 8080 --path /mcp
+```
+
+On A, one entry:
+
+```json
+{
+  "mcpServers": {
+    "smol": {
+      "type": "http",
+      "url": "http://b.local:8080/mcp",
+      "headers": { "Authorization": "Bearer <the token you generated>" }
+    }
+  }
+}
 ```
 
 - **It refuses to start without `SMOL_MCP_AUTH_TOKEN`**, and every request
@@ -149,7 +206,11 @@ SMOL_MCP_AUTH_TOKEN=$(openssl rand -hex 16) \
   `x-smol-mcp-token`. The second header is there for a deployment that puts
   something else in `authorization` before the request reaches this server.
 - The bind is `127.0.0.1` by default. Publishing the port is a decision to
-  make in the open, not the consequence of a default.
+  make in the open, not the consequence of a default, and off loopback you
+  should also set `SMOL_MCP_HTTP_ALLOWED_HOSTS` to the name A dials.
+- An idle session is closed and its ephemeral machines deleted; a session with
+  a tool call still running is never closed, however long the call takes.
+- This is plain HTTP. Over anything but a network you trust, put it behind TLS.
 - Replies are plain JSON rather than an SSE frame per response
   (`enableJsonResponse`), because the reply travels through a proxy whose
   buffering is not ours and no tool here streams.
@@ -419,10 +480,12 @@ Each one has a test.
 |---|---|---|
 | a | A local file upload must wait until the workload container is running, or it lands in the agent's namespace and is hidden once the container mounts over the path. | `test/unit/machines.test.ts` asserts the upload call comes after a successful exec; `test/integration/local.test.ts` and `cloud.test.ts` assert the guest reads its own bytes back. |
 | b | `run-command` reads `{stdout, stderr, exitCode}` from the body, never from the HTTP status: both APIs answer 200 for a command that exited non-zero. | `test/unit/client.test.ts`, `test/unit/cloud-client.test.ts`, and a real `exit 42` in both integration suites. |
-| c | Local parity is stated by the paths this server calls, not by `serve openapi`'s `info.version`, which is hardcoded at `0.5.2` on a v1.14.3 binary. | `src/parity.ts`, asserted in `test/integration/local.test.ts` including the assertion that `info.version` is *not* the version. |
+| c | Local parity is stated by the paths this server calls, not by `serve openapi`'s `info.version`, which is hardcoded at `0.5.2` on a v1.14.5 binary. | `src/parity.ts`, asserted in `test/integration/local.test.ts` including the assertion that `info.version` is *not* the version. |
 | d | The local create field is `network`, not `net`, and `memoryMb`, not `memory`. | `test/unit/client.test.ts` asserts the exact request body; `test/unit/tools.test.ts` asserts the CLI spellings are stripped by the schema. |
 | e | The cloud connect bridge answers `allow: GET,HEAD`, so an MCP client cannot reach a guest through it; the machine's ingress URL carries POST. | Not a unit test: `test/unit/http-transport.test.ts` covers the transport, and the bridge's methods were probed by hand. |
 | f | A server hosted behind an ingress cannot assume `authorization` is free for a token of its own. | `test/unit/http-transport.test.ts` initializes a session with another credential in `authorization` and the server token in `x-smol-mcp-token`. |
+| g | `branchable` is asked for in a different place on each target, and neither can turn it on for a machine that already exists. | `test/unit/client.test.ts` asserts the start query, `test/unit/cloud-client.test.ts` asserts the create field and that the start carries no query; both refusals are asserted by message. |
+| h | A cloud machine created `ephemeral` is deleted before it can be started, because it is created stopped. | `test/unit/cloud-client.test.ts` asserts the create body carries `ttlSeconds` and `autoStopSeconds` and no `ephemeral`. |
 
 Two more, from the same source:
 
@@ -459,18 +522,50 @@ deletes what it makes in the test that makes it, and its `afterAll` asserts no
 
 ## Verified
 
-Both transports and both targets were run end to end before this tree was
-published: the unit suite on a host with no hypervisor and no key, the local
-integration suite against `smolvm` v1.14.3 on macOS on Apple Silicon, and the
-cloud integration suite against the smol cloud API. A real MCP client over
-stdio (`scripts/smoke.mjs`) listed the tools and ran a command on each target,
-and the same client over Streamable HTTP (`scripts/smoke-http.mjs`) did the
-same against a server hosted on a smol cloud machine, once with the agent
-inside the machine speaking stdio and once outside it over the machine's
-ingress URL. The two authentication gates were both provoked from another
-host: a request with no server token and a request with the wrong one are each
-a 401.
+What was actually run, on what, rather than what should work.
 
+**Keyless, on any host.** `npm run lint`, `npm run typecheck` and
+`npm run test:unit`: 10 files, 163 tests, all passing. Those three are also
+the whole CI gate, because the integration suites need a hypervisor and an
+account and neither belongs on a pull request.
+
+**Local, on real machines.** `smolvm` **1.14.5** on macOS on Apple Silicon,
+node 25, from an isolated `HOME`. `SMOL_MCP_IT=1 npm run test:integration`
+runs the lifecycle, parity, truncation, egress-refusal and run-once cases plus
+the stdio EOF suite: 2 files, 10 passing, the cloud file skipped. A real MCP
+client over stdio (`scripts/smoke.mjs local`) listed all thirteen tools and
+ran a command. The worked example above is a real run, pasted back. The branch
+flow was run end to end: a machine created `branchable`, a file written into
+it, `branch-machine` into a child in 0.4 s against 2.7 s for a create, the
+child reading the parent's file, and a non-branchable source refused with the
+API's own message.
+
+**Cloud, against the live API.** Driven through this server over stdio with
+`SMOL_MCP_TARGETS=cloud`: a create with a published port and open egress, the
+blocked-plus-port combination refused before anything was sent, `write-file`
+and `read-file` through the documented files route, `branch-machine` into a
+child that read the parent's file, and `machine-logs` from the events route
+with the cursor coming back empty on the second call. Every machine was
+deleted in the same run and `GET /v1/machines` was empty afterwards. The whole
+exercise ran on the smallest billable shape and cost small change; the cloud
+suite reads the account before it creates anything and stops at its own spend
+ceiling rather than slowing down.
+
+**Not verified.** The HTTP transport has unit coverage against a real listener
+but was not run between two hosts, and the four client configurations above
+are read from each client's documentation rather than driven. Cloud
+checkpoints failed on the service side and no tool ships for them; see what
+this server does not expose.
+
+## How this relates to the smolmachines SDK
+
+If you are writing a Node or Python application rather than connecting an
+agent, use the embedded `smolmachines` SDK instead. It runs the local engine
+in process, does not need `smolvm serve`, and reaches smol cloud through the
+same Machine API. This server exists for the other case: a client that already
+speaks MCP and wants tools rather than a library. Its local target rides on
+`smolvm serve` because that API is the one an out-of-process server can talk
+to on every platform the CLI supports.
 
 ## Traps
 
