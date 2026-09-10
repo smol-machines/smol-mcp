@@ -30,10 +30,31 @@ async function probe(url: string): Promise<string | undefined> {
   }
 }
 
-export function candidateUrls(cfg: Config, env: NodeJS.ProcessEnv = process.env): string[] {
+// Loopback TCP for the serve this server starts on Windows. Not 8080, which
+// is both the serve's own default and this server's HTTP transport default,
+// and not 10081, which the serve binds for its guest rollout ingress. A host
+// that needs another one sets SMOL_LOCAL_URL.
+export const WINDOWS_LOCAL_URL = "http://127.0.0.1:10099";
+
+// Where this server expects to find, or put, the serve.
+//
+// Windows has no Unix socket support in `smolvm serve`: asking for one is
+// refused at parse time with "expected ADDR:PORT", so every local call on that
+// platform failed before this was platform-aware.
+export function defaultLocalUrl(cfg: Config, platform: string = process.platform): string {
+  if (platform === "win32") return WINDOWS_LOCAL_URL;
+  return `unix://${join(cfg.runtimeDir, "api.sock")}`;
+}
+
+export function candidateUrls(cfg: Config, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string[] {
   const out: string[] = [];
   if (cfg.localUrl !== "") out.push(cfg.localUrl);
-  out.push(`unix://${join(cfg.runtimeDir, "api.sock")}`);
+  out.push(defaultLocalUrl(cfg, platform));
+  if (platform === "win32") {
+    // A serve somebody else started on the binary's own default.
+    out.push("http://127.0.0.1:8080");
+    return [...new Set(out)];
+  }
   // smolvm's own defaults: XDG_RUNTIME_DIR on Linux, /tmp/smolvm.sock on macOS.
   if (env.XDG_RUNTIME_DIR) out.push(`unix://${join(env.XDG_RUNTIME_DIR, "smolvm.sock")}`);
   out.push("unix:///tmp/smolvm.sock");
@@ -206,7 +227,7 @@ export async function ensureServe(cfg: Config, log: (msg: string) => void): Prom
   const missing = localUnavailable(cfg);
   if (missing !== undefined) throw new BackendError(`the local target is unavailable on this host: ${missing}`, "LOCAL_UNAVAILABLE");
 
-  const url = cfg.localUrl !== "" ? cfg.localUrl : `unix://${join(cfg.runtimeDir, "api.sock")}`;
+  const url = cfg.localUrl !== "" ? cfg.localUrl : defaultLocalUrl(cfg);
   const listen = url.startsWith("http://") ? url.slice("http://".length) : url;
   if (url.startsWith("http://") && !/^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(url)) {
     throw new Error(`refusing to start smolvm serve on a non-loopback address (${url}): the local API has no authentication`);

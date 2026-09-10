@@ -6,7 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../../src/server.js";
-import { checkVersion, isOrphan, localUnavailable, serveEnv, versionAtLeast } from "../../src/local/serve.js";
+import { WINDOWS_LOCAL_URL, candidateUrls, checkVersion, defaultLocalUrl, isOrphan, localUnavailable, serveEnv, versionAtLeast } from "../../src/local/serve.js";
 import type { HostChecks, ServeHandle } from "../../src/local/serve.js";
 import { ServePool } from "../../src/local/pool.js";
 import { testConfig } from "./fake-backend.js";
@@ -191,5 +191,40 @@ describe("the minimum smolvm version", () => {
     // version at all is not evidence of anything.
     expect(() => checkVersion("0.5.20", "")).not.toThrow();
     expect(() => checkVersion("", "1.14.0")).not.toThrow();
+  });
+});
+
+describe("where the serve is expected to listen, per platform", () => {
+  const cfg = testConfig({ runtimeDir: "/run/smol-mcp" });
+
+  it("uses a Unix socket in the runtime directory off Windows", () => {
+    expect(defaultLocalUrl(cfg, "darwin")).toBe("unix:///run/smol-mcp/api.sock");
+    expect(defaultLocalUrl(cfg, "linux")).toBe("unix:///run/smol-mcp/api.sock");
+  });
+
+  it("uses loopback TCP on Windows, which is the only thing the serve there accepts", () => {
+    // `smolvm serve start --listen unix://...` is refused at parse time on
+    // Windows with "expected ADDR:PORT", so every local call on that platform
+    // failed before this was platform-aware.
+    expect(defaultLocalUrl(cfg, "win32")).toBe(WINDOWS_LOCAL_URL);
+    expect(WINDOWS_LOCAL_URL.startsWith("http://127.0.0.1:")).toBe(true);
+  });
+
+  it("offers no Unix candidate at all on Windows, and still honours an explicit address", () => {
+    expect(candidateUrls(cfg, {}, "win32")).toEqual([WINDOWS_LOCAL_URL, "http://127.0.0.1:8080"]);
+    expect(candidateUrls(testConfig({ localUrl: "http://127.0.0.1:9000" }), {}, "win32")).toEqual([
+      "http://127.0.0.1:9000",
+      WINDOWS_LOCAL_URL,
+      "http://127.0.0.1:8080",
+    ]);
+    for (const u of candidateUrls(cfg, {}, "win32")) expect(u.startsWith("unix://"), u).toBe(false);
+  });
+
+  it("still probes the smolvm defaults off Windows", () => {
+    expect(candidateUrls(cfg, { XDG_RUNTIME_DIR: "/run/user/1000" }, "linux")).toEqual([
+      "unix:///run/smol-mcp/api.sock",
+      "unix:///run/user/1000/smolvm.sock",
+      "unix:///tmp/smolvm.sock",
+    ]);
   });
 });
