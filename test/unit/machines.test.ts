@@ -244,7 +244,7 @@ describe("startMachine", () => {
   it("starts a stopped machine and waits until a command runs in it", async () => {
     const b = new FakeBackend();
     const m = { backend: b, cfg: testConfig(), state: undefined, session: SESSION };
-    b.machines.set("keep", { id: "keep", name: "keep", state: "stopped", cpus: 2, memoryMb: 2048, network: "open", createdAt: 1, image: "alpine", pid: null });
+    b.machines.set("keep", { id: "keep", name: "keep", state: "stopped", cpus: 2, memoryMb: 2048, network: "open", createdAt: 1, image: "alpine", pid: null, url: null });
     b.execImpl = async (_name, req) => ({ exitCode: 0, stdout: `${req.command[1]}\n`, stderr: "" });
     const r = await startMachine(m, "keep", true);
     expect(r.machine.state).toBe("running");
@@ -264,7 +264,7 @@ describe("startMachine", () => {
 });
 
 describe("reporting a machine the cloud target starts for us", () => {
-  const stopped = (name: string) => ({ id: name, name, state: "stopped", cpus: 1, memoryMb: 256, network: "open", createdAt: 1, image: "alpine", pid: null });
+  const stopped = (name: string) => ({ id: name, name, state: "stopped", cpus: 1, memoryMb: 256, network: "open", createdAt: 1, image: "alpine", pid: null, url: null });
 
   function fleet(target: "local" | "cloud", state: string) {
     const b = new FakeBackend(target);
