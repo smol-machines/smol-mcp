@@ -97,7 +97,12 @@ export class LocalClient implements MachineBackend {
   readonly target = "local" as const;
   private readonly ep: Endpoint;
 
-  constructor(readonly url: string) {
+  constructor(
+    readonly url: string,
+    // The platform the serve runs on, which for the local target is this
+    // one. Injectable so the Windows refusal can be asserted anywhere.
+    private readonly platform: string = process.platform,
+  ) {
     this.ep = parseEndpoint(url);
   }
 
@@ -165,6 +170,18 @@ export class LocalClient implements MachineBackend {
   // started branchable answers 409, and the API's own message is what the
   // caller needs, so it is passed through rather than replaced.
   async branchMachine(name: string, childName: string, ctx: CallCtx = {}): Promise<MachineView> {
+    // A branch needs the golden machine's control socket, and serve on
+    // Windows never opens one: `machine start --branchable` reports success
+    // there and the fork route then answers with a raw WinSock refusal and a
+    // remedy naming the alias of the flag that was already passed. Observed
+    // against 1.14.5. Saying so here is the difference between a caller
+    // learning the platform cannot do this and a caller retrying a flag.
+    if (this.platform === "win32") {
+      throw new BackendError(
+        "branch-machine is not available when smolvm serve runs on Windows: a machine started branchable there has no control socket to branch from. Use a Linux or macOS host for the local target, or branch on the cloud target.",
+        "UNSUPPORTED",
+      );
+    }
     const res = await this.call("POST", `${API}/machines/${encodeURIComponent(name)}/fork`, { json: { name: childName }, timeoutMs: 300_000, signal: ctx.signal });
     if (res.status !== 200) throw apiError(res, `branch machine ${name} into ${childName}`);
     return localView(parseBody(res, MachineInfoSchema, `branch machine ${name}`));

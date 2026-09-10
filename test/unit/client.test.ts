@@ -119,6 +119,22 @@ describe("LocalClient parsing", () => {
     expect(body).not.toHaveProperty("allowedCidrs");
   });
 
+  it("says branching is unavailable on a Windows serve rather than relaying a socket error", async () => {
+    // Observed against 1.14.5 on Windows: `machine start --branchable`
+    // reports success, no control socket is ever opened, and the fork route
+    // answers "control socket not responding ... (os error 10061); start it
+    // with `machine start --forkable`", which names the alias of the flag the
+    // caller already passed. A caller reading that retries the flag forever.
+    const windows = new LocalClient(client.url, "win32");
+    seen.length = 0;
+    await expect(windows.branchMachine("b", "child-1")).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      message: expect.stringContaining("not available when smolvm serve runs on Windows"),
+    });
+    // Refused here, so nothing was sent and no machine was touched.
+    expect(seen).toHaveLength(0);
+  });
+
   it("asks for a branch source with the start query, and branches with the child name alone", async () => {
     seen.length = 0;
     await client.startMachine("b", { branchable: true });
