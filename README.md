@@ -149,6 +149,19 @@ Cursor (`.cursor/mcp.json`)** all take the same shape:
 }
 ```
 
+**A project `.mcp.json` is not live until it is approved.** Until then
+`claude mcp list` reports `Pending approval (run claude to approve)`, and the
+first interactive session in that directory offers
+`New MCP server found in this project: smol`. The highlighted default there is
+`Continue without using this MCP server`, so the server stays off unless you
+pick `Use this MCP server`. A headless run skips that step with
+`--mcp-config .mcp.json --strict-mcp-config`. Either way the tools arrive
+prefixed, as `mcp__smol__create-machine` and so on, which is what
+`--allowedTools "mcp__smol"` permits in one go. In a session that asks before
+each call, the prompt carries the arguments and the tool's own description,
+which is why those descriptions are written for someone deciding rather than
+for someone browsing.
+
 **OpenCode (`opencode.json`)** uses its own key names:
 
 ```json
@@ -174,10 +187,11 @@ and it serves both, and asks once which one the session is for; see the target
 modes below.
 
 **What has been driven end to end is the MCP SDK's own `Client`**, over both
-transports, by the two scripts in `scripts/`, **and OpenCode 1.18.30**, which
-ran the worked example below over stdio and a machine on another host over
-HTTP, from the `opencode.json` printed above with no changes. The other three
-configurations are read from each client's documentation and not driven.
+transports, by the two scripts in `scripts/`, **OpenCode 1.18.30**, which ran
+the worked example below over stdio and a machine on another host over HTTP,
+and **Claude Code 2.1.268**, which ran the worked example from the `.mcp.json`
+printed above with no changes. The Claude Desktop and Cursor shapes are read
+from each client's documentation and not driven.
 
 ## Two computers: the agent here, the machines there
 
@@ -584,11 +598,18 @@ session holding a 70 s call through the same limit returned its output and
 stayed usable; and `netstat` on the serving host showed `smolvm` bound to
 loopback only, with the MCP port the single listener on the LAN address.
 
-**A real client, driven headless.** OpenCode **1.18.30**, configured exactly as
-the `opencode.json` above, ran the worked example over stdio and a
+**Two real clients, driven.** OpenCode **1.18.30**, configured exactly as the
+`opencode.json` above, ran the worked example over stdio and a
 create-plus-run-plus-delete against the Windows laptop over HTTP with the
-bearer header. Both were tool calls a model chose from the schemas, not
-scripted requests.
+bearer header. **Claude Code 2.1.268** ran the worked example over stdio from
+the `.mcp.json` above, `npx -y smol-mcp` and no `env` block, against the
+published package: thirteen tools listed, then a machine created, a repository
+cloned into it, its suite run, the report read back twice, the second time
+with `offset` to reach its tail, and the machine deleted: eight calls to this
+server in 27 seconds. It ran
+headless with `--mcp-config` and interactively, where each call is confirmed
+one at a time. Both clients chose their calls from the schemas; neither was a
+scripted request.
 
 **The package.** `npm pack` gives an 87781 byte tarball carrying `dist`,
 `LICENSE`, `README.md` and `package.json` and nothing from `src` or `test`.
@@ -608,10 +629,9 @@ a client on the Mac creating, running a command in and deleting a second
 machine through the ingress URL. Every machine was deleted and
 `GET /v1/machines` was empty afterwards; the whole cloud half cost 449 micros.
 
-**Not verified.** Claude Code, Claude Desktop and Cursor were not driven: their
-configurations above are read from each client's documentation, and the three
-`claude` runs attempted here never reached the server because that CLI had no
-usable login on the host. The browser `Origin` gate was exercised only with
+**Not verified.** Claude Desktop and Cursor were not driven: their
+configurations above are read from each client's documentation. The browser
+`Origin` gate was exercised only with
 `SMOL_MCP_HTTP_ALLOWED_ORIGINS` empty, where a request carrying an origin is
 accepted, which is what that setting means and not a test of refusing. Cloud
 checkpoints failed on the service side and no tool ships for them; see what
@@ -659,6 +679,14 @@ to on every platform the CLI supports.
 - **`url` and `ready` are both `null`/`false` until something listens on the
   published port.** Start the server first, then wait on readiness, or the
   wait can never end. `ports[].hostPort` is allocated long before either.
+- **An `npx` failure reaches the client as an MCP connection failure.**
+  `npx -y smol-mcp` fetches the package on first use, and when that fetch
+  fails the client reports only `CONNECTION_CLOSED: "Connection closed"`,
+  which says nothing about npm. Run the command by hand to see the real
+  error. One cause on a shared machine is an npm cache with directories a
+  previous `sudo npm` left owned by root: every later fetch then fails with
+  an `EACCES` that npm prints as `EEXIST ... File exists`. A global install,
+  or `npm_config_cache` pointed somewhere writable, gets past it.
 - **`npm pack` refuses to overwrite an existing tarball** in
   `--pack-destination`, and it writes to `~/.npm/_cacache` even for a pack.
   In a sandbox that denies either, the failure is an npm error in the middle
