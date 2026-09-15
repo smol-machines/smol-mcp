@@ -6,7 +6,7 @@ import type { Server } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalClient, parseSseData } from "../../src/local/client.js";
+import { LocalClient, localView, parseSseData } from "../../src/local/client.js";
 import { BackendError } from "../../src/backend.js";
 
 let server: Server;
@@ -65,6 +65,18 @@ describe("LocalClient parsing", () => {
     // host, so there is no ingress address, and saying so keeps the field
     // meaningful on the target that does have one.
     expect(list[0]?.url).toBeNull();
+  });
+
+  // Every local machine reported `image: null` up to v1.16.1, because the API
+  // had no image field and the view hardcoded the null rather than reading one.
+  // A caller comparing two machines could not tell what either was running.
+  it("reports the image the API resolved, and null only when the serve omits it", () => {
+    const base = { name: "m", state: "running", cpus: 2, memoryMb: 2048, network: true, createdAt: 1 };
+    expect(localView({ ...base, image: "python:3.12-alpine" }).image).toBe("python:3.12-alpine");
+    // An older serve sends no image key at all, which is not the same claim as
+    // a machine that has none, but both are null to a caller.
+    expect(localView(base).image).toBeNull();
+    expect(localView({ ...base, image: null }).image).toBeNull();
   });
 
   it("sends the schema's field names on create: network and memoryMb, never net or memory (constraint d)", async () => {
