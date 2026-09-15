@@ -20,10 +20,6 @@ export const ConfigSchema = z.object({
   machinePrefix: z.string().default("mcp-"),
   memoryMb: z.number().int().positive().default(2048),
   cpus: z.number().int().positive().default(2),
-  // The local run-once default only. It is "open" because the local API
-  // refuses a create with no egress path whenever the image still has to be
-  // pulled from a registry, and run-once always pulls; the cloud target,
-  // where the control plane pulls, defaults to blocked. See the README.
   // Egress for a machine whose caller named no policy. Blocked on both
   // targets: a machine an agent asked for should not reach the internet
   // because nobody said otherwise. The local API refuses a blocked create
