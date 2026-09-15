@@ -5,6 +5,9 @@ import { z } from "zod";
 
 export const MachineInfoSchema = z.looseObject({
   name: z.string(),
+  // The resolved workload image, from v1.16.1 (smol-machines/smolvm#1262).
+  // Absent on an older serve, and absent on a machine that has no image.
+  image: z.string().nullish(),
   state: z.string(),
   cpus: z.number(),
   memoryMb: z.number(),

@@ -33,7 +33,8 @@ export function localView(m: MachineInfo): MachineView {
     memoryMb: m.memoryMb,
     network: restricted ? `allow(${[...hosts, ...cidrs].join(",")})` : m.network ? "open" : "blocked",
     createdAt: m.createdAt,
-    image: null,
+    // Null until v1.16.1, which is the first serve to report the image at all.
+    image: m.image ?? null,
     pid: m.pid ?? null,
     url: null,
   };
