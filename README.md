@@ -59,7 +59,7 @@ shape whichever target answers it.
 
 | Tool | Targets | Notes |
 |---|---|---|
-| `list-machines` | local, cloud | |
+| `list-machines` | local, cloud | The machine record carries the image it was built from, as `image`. On local that needs `smolvm` 1.16.1 or newer, which is the first release whose API reports it; below that it is null. |
 | `get-machine` | local, cloud | Cloud resolves a name to an id with one extra list call. |
 | `create-machine` | local, cloud | Starts the machine and waits until commands run in it. `ports` and `storageGb` on both targets, `mounts` and `overlayGb` local only, `branchable` to make it a branch source. |
 | `run-command` | local, cloud | Returns `{stdout, stderr, exitCode, truncated, timedOut, overflow, startedMachine}`. Output past the budget keeps its head and its tail, and the whole stream is written into the machine at the path `overflow` names. |
@@ -554,6 +554,15 @@ every test, and stops the moment period spend passes its own ceiling. It
 deletes what it makes in the test that makes it, and its `afterAll` asserts no
 `mcp-` machine is left on the fleet.
 
+## Changelog
+
+### Unreleased
+
+- `get-machine` and `list-machines` report a local machine's image, as `image`.
+  It was always null on that target before, because the local API had no such
+  field; `smolvm` 1.16.1 added one and this reads it. An older serve still
+  answers null, so nothing else changes.
+
 ## Verified
 
 What was actually run, on what, rather than what should work. Everything below
@@ -580,6 +589,18 @@ five calls unaided. The branch flow was run end to end on macOS: a machine
 created `branchable`, a file written into it, `branch-machine` into a child in
 0.4 s against 2.7 s for a create, the child reading the parent's file, and a
 non-branchable source refused with the API's own message.
+
+**Re-run on smolvm 1.16.1, macOS only, 2026-09-15.** The keyless row and the
+local row above were run again on the Mac against the 1.16.1 release archive,
+on the tree this section ships with: `npm run lint`, `npm run typecheck` and
+`npm run test:unit` at 11 files and 174 tests, and
+`SMOL_MCP_IT=1 npm run test:integration` at 10 passing with the cloud file
+skipped, in 147 s. The parity list is unchanged on that release: 13 paths
+called, none missing, none unaccounted for. A machine created from `alpine`
+reported `alpine` back through `create-machine`, `get-machine` and
+`list-machines`, which is the field this release added. The Windows, Linux,
+two-computer, driven-client, package and cloud paragraphs below were not
+re-run and stand on their 1.14.5 evidence.
 
 **Windows.** The local target works there: this server starts `smolvm serve`
 on loopback TCP, boots Linux microVMs and runs commands, files and logs in
