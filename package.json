@@ -1,6 +1,6 @@
 {
   "name": "smol-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "MCP server for smol machines: one tool vocabulary over smolvm serve on this host and over the smol cloud API",
   "keywords": [

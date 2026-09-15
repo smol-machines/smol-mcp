@@ -556,7 +556,7 @@ deletes what it makes in the test that makes it, and its `afterAll` asserts no
 
 ## Changelog
 
-### Unreleased
+### 0.1.1 (2026-09-15)
 
 - `get-machine` and `list-machines` report a local machine's image, as `image`.
   It was always null on that target before, because the local API had no such
